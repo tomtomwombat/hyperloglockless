@@ -11,7 +11,11 @@ Lightning fast concurrent HyperLogLog for Rust.
 
 hyperloglockless is a simple, fast, and lockless implementation of a concurrent HyperLogLog in Rust.
 
+<<<<<<< HEAD
 hyperloglockless tries to be a direct replacement for `RwLock<OtherHyperLogLog<K, V>>`.
+=======
+hyperloglockless is a direct replacement for `RwLock<OtherHyperLogLog<K, V>>` and is 6.8 times faster.
+>>>>>>> c0ccbde (init)
 To accomplish these goals, all methods take `&self` instead of modifying methods taking `&mut self`.
 This allows you to put a HyperLogLog in an `Arc<T>` and share it between threads while still being able to modify it.
 

@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 mod hasher;
 pub use hasher::DefaultHasher;
+mod error;
+pub use error::Error;
 
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -27,7 +29,7 @@ impl HyperLogLog {
 
 impl<S: BuildHasher> HyperLogLog<S> {
     pub fn with_hasher(precision: u8, builder: S) -> Self {
-        let count = Self::register_count(precision);
+        let count = 1 << precision;
         let mut data = Vec::with_capacity(count);
         for _ in 0..count {
             data.push(AtomicU8::new(0));
@@ -57,9 +59,20 @@ impl<S: BuildHasher> HyperLogLog<S> {
         self.registers[index].fetch_max(zeros, Ordering::Relaxed);
     }
 
-    #[inline]
-    fn register_count(precision: u8) -> usize {
-        1 << precision
+    #[inline(always)]
+    pub fn merge(&self, other: &Self) -> Result<(), Error> {
+        if self.registers.len() != other.registers.len() {
+            return Err(Error::IncompatibleLength);
+        }
+
+        // TODO? if self.builder != other.builder { ... }
+
+        for (i, x) in other.registers.iter().enumerate() {
+            let loaded = x.load(Ordering::Relaxed);
+            self.registers[i].fetch_max(loaded, Ordering::Relaxed);
+        }
+
+        Ok(())
     }
 
     #[inline]
@@ -148,6 +161,25 @@ mod tests {
                 assert!(my_acc > 0.75);
             }
         }
+    }
+
+    #[test]
+    fn test_merge() {
+        let left = HyperLogLog::seeded(8, 42);
+        let right = HyperLogLog::seeded(8, 42);
+
+        for x in 1..2000 {
+            left.insert(&x);
+        }
+        for x in 1000..3000 {
+            right.insert(&x);
+        }
+
+        left.merge(&right).unwrap();
+
+        let real = 3000 as f64;
+        let my_acc = (real - (left.count() as f64 - real).abs()) / real;
+        assert!(my_acc > 0.9);
     }
 
     #[cfg(feature = "serde")]
