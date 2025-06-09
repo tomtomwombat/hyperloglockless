@@ -36,6 +36,7 @@ let count = hll.count();
 ```
 
 ## Performance
+![multi-insert-perf](https://github.com/user-attachments/assets/93bf3b54-c4e1-4d33-a14d-b73aa947a851)
 
 ## Available Features
 
