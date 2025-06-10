@@ -35,6 +35,9 @@ let count = hll.count();
 ![multi-insert-perf](https://github.com/user-attachments/assets/93bf3b54-c4e1-4d33-a14d-b73aa947a851)
 
 ## Accuracy
+hyperloglockless is accurate even when other implementations break down after millions of items.
+
+![acc](https://github.com/user-attachments/assets/135d552c-1d98-4a43-bae0-3d6d08cd9ef4)
 
 
 ## Available Features
