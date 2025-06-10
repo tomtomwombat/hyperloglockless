@@ -34,6 +34,7 @@ let count = hll.count();
 ```
 
 ## Performance
+![perf-single](https://github.com/user-attachments/assets/8b3df60a-5e42-4f70-b81e-68b3446ade83)
 ![multi-insert-perf](https://github.com/user-attachments/assets/93bf3b54-c4e1-4d33-a14d-b73aa947a851)
 
 ## Accuracy
