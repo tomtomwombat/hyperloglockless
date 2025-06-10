@@ -9,7 +9,11 @@ Lightning fast concurrent HyperLogLog for Rust.
 
 ## Overview
 
+HyperLogLogs are a space efficient data structures for the "count-distinct problem", approximating the number of distinct elements in a multiset. [Paper](https://algo.inria.fr/flajolet/Publications/FlFuGaMe07.pdf).
+
 hyperloglockless is a lockless concurrent HyperLogLog, making it a direct replacement for `RwLock<OtherHyperLogLog<K, V>>`. To accomplish these goals, all methods take `&self` instead of modifying methods taking `&mut self`. This allows you to put a HyperLogLog in an `Arc<T>` and share it between threads while still being able to modify it. HyperLogLog puts great effort into performance and aims to be as fast as possible, even in single threaded scenarios.
+
+hyperloglockless is also extremely accurate--it is able to count billions of items with 99.5% accuracy using only 65kb of memory.
 
 ## Usage
 
