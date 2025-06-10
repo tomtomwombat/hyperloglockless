@@ -9,13 +9,9 @@ Lightning fast concurrent HyperLogLog for Rust.
 
 ## Overview
 
-hyperloglockless is a simple, fast, and lockless implementation of a concurrent HyperLogLog in Rust.
+hyperloglockless is a accurate and fast lockless implementation of a concurrent HyperLogLog in Rust.
 
-hyperloglockless is a direct replacement for `RwLock<OtherHyperLogLog<K, V>>` and is 6.8 times faster.
-To accomplish these goals, all methods take `&self` instead of modifying methods taking `&mut self`.
-This allows you to put a HyperLogLog in an `Arc<T>` and share it between threads while still being able to modify it.
-
-HyperLogLog puts great effort into performance and aims to be as fast as possible.
+hyperloglockless is a direct replacement for `RwLock<OtherHyperLogLog<K, V>>`. To accomplish these goals, all methods take `&self` instead of modifying methods taking `&mut self`. This allows you to put a HyperLogLog in an `Arc<T>` and share it between threads while still being able to modify it. HyperLogLog puts great effort into performance and aims to be as fast as possible, even in single threaded scenarios.
 
 ## Usage
 
@@ -28,7 +24,7 @@ Basic usage:
 ```rust
 use hyperloglockless::HyperLogLog;
 
-let hll = HyperLogLog::new(8);
+let hll = HyperLogLog::new(16);
 hll.insert("42");
 hll.insert("🦀");
 
@@ -37,6 +33,9 @@ let count = hll.count();
 
 ## Performance
 ![multi-insert-perf](https://github.com/user-attachments/assets/93bf3b54-c4e1-4d33-a14d-b73aa947a851)
+
+## Accuracy
+
 
 ## Available Features
 

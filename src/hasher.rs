@@ -22,7 +22,7 @@ impl<H: Hasher + Clone> BuildHasher for CloneBuildHasher<H> {
     }
 }
 
-/// The default hasher for `BloomFilter`.
+/// The default hasher for [`crate::HyperLogLog`].
 ///
 /// `DefaultHasher` has a faster `build_hasher` than `std::collections::hash_map::RandomState` or `SipHasher13`.
 /// This is important because `build_hasher` is called once for every actual hash.

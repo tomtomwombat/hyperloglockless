@@ -9,90 +9,123 @@ pub use hasher::DefaultHasher;
 mod error;
 pub use error::Error;
 
+/// HyperLogLog is a data structure for the "count-distinct problem", approximating the number of distinct elements in a multiset.
+///
+/// # Example
+/// ```rust
+/// use hyperloglockless::HyperLogLog;
+///
+/// let hll = HyperLogLog::new(16);
+/// hll.insert("42");
+/// hll.insert("🦀");
+///
+/// let count = hll.count();
+/// ```
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HyperLogLog<S = DefaultHasher> {
     registers: Box<[AtomicU8]>,
     precision: u32,
-    builder: S,
+    hasher: S,
 }
 
 impl HyperLogLog {
+    /// Returns a new `HyperLogLog` with `1 << precision` registers (1 byte each)
+    /// using the default hasher with a random seed.
     pub fn new(precision: u8) -> Self {
         Self::with_hasher(precision, DefaultHasher::default())
     }
 
+    /// Returns a new `HyperLogLog` with `1 << precision` registers (1 byte each)
+    /// using the default hasher seeded with `seed`.
     pub fn seeded(precision: u8, seed: u128) -> Self {
         Self::with_hasher(precision, DefaultHasher::seeded(&seed.to_be_bytes()))
     }
 }
 
 impl<S: BuildHasher> HyperLogLog<S> {
-    pub fn with_hasher(precision: u8, builder: S) -> Self {
+    /// Returns a new `HyperLogLog` with `1 << precision` registers (1 byte each)
+    /// using the provided hasher.
+    pub fn with_hasher(precision: u8, hasher: S) -> Self {
         let count = 1 << precision;
         let mut data = Vec::with_capacity(count);
         for _ in 0..count {
             data.push(AtomicU8::new(0));
         }
         Self {
-            builder,
+            hasher,
             precision: precision as u32,
             registers: data.into(),
         }
     }
 
+    /// Returns the number registers in `self`.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.registers.len()
+    }
+
+    /// Returns an iterator over the value of each register.
+    #[inline]
+    pub fn iter(&self) -> impl Iterator<Item = u8> + use<'_, S> {
+        self.registers.iter().map(|x| x.load(Ordering::Relaxed))
+    }
+
+    /// Inserts the item into the `HyperLogLog`.
     #[inline(always)]
     pub fn insert<T: Hash + ?Sized>(&self, value: &T) {
-        let mut hasher = self.builder.build_hasher();
+        let mut hasher = self.hasher.build_hasher();
         value.hash(&mut hasher);
         self.insert_hash(hasher.finish());
     }
 
+    /// Inserts the hash of an item into the `HyperLogLog`.
     #[inline(always)]
-    fn insert_hash(&self, hash64: u64) {
-        let mut hash = (hash64 >> 32) as u32;
-        let index: usize = (hash >> (32 - self.precision)) as usize;
-        hash = (hash << self.precision) | (1 << (self.precision - 1));
+    pub fn insert_hash(&self, mut hash: u64) {
+        // left of the hash is used to get index
+        let index = (hash >> (64 - self.precision)) as usize;
+        // right is used for leading zeros
+        hash = hash << self.precision;
 
         // TODO: <https://graphics.stanford.edu/~seander/bithacks.html>
-        let zeros = hash.leading_zeros() as u8;
+        let zeros = 1 + hash.leading_zeros() as u8;
         self.registers[index].fetch_max(zeros, Ordering::Relaxed);
     }
 
+    /// Merges another `HyperLogLog` into `self`, updating the count.
+    /// Returns `Err(Error::IncompatibleLength)` if the two `HyperLogLog`s have
+    /// different length ([`HyperLogLog::len`]).
     #[inline(always)]
     pub fn merge(&self, other: &Self) -> Result<(), Error> {
-        if self.registers.len() != other.registers.len() {
+        if self.len() != other.len() {
             return Err(Error::IncompatibleLength);
         }
 
         // TODO? if self.builder != other.builder { ... }
 
-        for (i, x) in other.registers.iter().enumerate() {
-            let loaded = x.load(Ordering::Relaxed);
-            self.registers[i].fetch_max(loaded, Ordering::Relaxed);
+        for (i, x) in other.iter().enumerate() {
+            self.registers[i].fetch_max(x, Ordering::Relaxed);
         }
 
         Ok(())
     }
 
+    /// Returns the approximate number of items in `self`.
     #[inline]
     pub fn count(&self) -> usize {
         self.raw_count() as usize
     }
 
-    fn raw_count(&self) -> f64 {
+    /// Returns the approximate number of items in `self`.
+    #[inline]
+    pub fn raw_count(&self) -> f64 {
         let count = self.registers.len();
         let mut raw = self.estimate_raw();
-        let zeros = self
-            .registers
-            .iter()
-            .map(|x| (x.load(Ordering::Relaxed) == 0) as usize)
-            .sum();
-        let two32 = (1u64 << 32) as f64;
+        let zeros = self.iter().map(|x| (x == 0) as usize).sum();
+
+        // correction for small values
         if raw <= 2.5 * count as f64 && zeros != 0 {
             raw = Self::linear_count(count, zeros);
-        } else if raw > two32 / 30.0 {
-            raw = -1.0 * two32 * (1.0 - raw / two32).ln();
         }
         raw
     }
@@ -101,14 +134,14 @@ impl<S: BuildHasher> HyperLogLog<S> {
         count as f64 * (count as f64 / zeros as f64).ln()
     }
 
+    fn harmonic_denom(&self) -> f64 {
+        self.iter().map(|x| 1.0 / (1u64 << x) as f64).sum()
+    }
+
     fn estimate_raw(&self) -> f64 {
         let count = self.registers.len();
-        let raw: f64 = self
-            .registers
-            .iter()
-            .map(|x| 1.0 / (1u64 << x.load(Ordering::Relaxed)) as f64)
-            .sum();
-        2.0 * Self::alpha(count) * (count * count) as f64 / raw
+        let raw = self.harmonic_denom();
+        Self::alpha(count) * (count * count) as f64 / raw
     }
 
     #[inline]
@@ -136,11 +169,7 @@ impl<S: BuildHasher> PartialEq for HyperLogLog<S> {
         if self.registers.len() != other.registers.len() {
             return false;
         }
-        (0..self.registers.len()).all(|i| {
-            let left = self.registers[i].load(Ordering::Relaxed);
-            let right = other.registers[i].load(Ordering::Relaxed);
-            left == right
-        })
+        std::iter::zip(self.iter(), other.iter()).all(|(l, r)| l == r)
     }
 }
 impl<S: BuildHasher> Eq for HyperLogLog<S> {}
