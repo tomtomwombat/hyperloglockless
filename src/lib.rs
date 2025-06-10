@@ -60,7 +60,7 @@ impl<S: BuildHasher> HyperLogLog<S> {
     }
 
     /// Returns the number registers in `self`.
-    #[inline]
+    #[inline(always)]
     pub fn len(&self) -> usize {
         self.registers.len()
     }
@@ -119,27 +119,29 @@ impl<S: BuildHasher> HyperLogLog<S> {
     /// Returns the approximate number of items in `self`.
     #[inline]
     pub fn raw_count(&self) -> f64 {
-        let count = self.registers.len();
         let mut raw = self.estimate_raw();
         let zeros = self.iter().map(|x| (x == 0) as usize).sum();
 
         // correction for small values
-        if raw <= 2.5 * count as f64 && zeros != 0 {
-            raw = Self::linear_count(count, zeros);
+        if raw <= 2.5 * self.len() as f64 && zeros != 0 {
+            raw = self.linear_count(zeros);
         }
         raw
     }
 
-    fn linear_count(count: usize, zeros: usize) -> f64 {
-        count as f64 * (count as f64 / zeros as f64).ln()
+    #[inline]
+    fn linear_count(&self, zeros: usize) -> f64 {
+        self.len() as f64 * (self.len() as f64 / zeros as f64).ln()
     }
 
+    #[inline]
     fn harmonic_denom(&self) -> f64 {
         self.iter().map(|x| 1.0 / (1u64 << x) as f64).sum()
     }
 
+    #[inline]
     fn estimate_raw(&self) -> f64 {
-        let count = self.registers.len();
+        let count = self.len();
         let raw = self.harmonic_denom();
         Self::alpha(count) * (count * count) as f64 / raw
     }
@@ -166,7 +168,7 @@ impl<T: Hash, S: BuildHasher> Extend<T> for HyperLogLog<S> {
 
 impl<S: BuildHasher> PartialEq for HyperLogLog<S> {
     fn eq(&self, other: &Self) -> bool {
-        if self.registers.len() != other.registers.len() {
+        if self.len() != other.len() {
             return false;
         }
         std::iter::zip(self.iter(), other.iter()).all(|(l, r)| l == r)
