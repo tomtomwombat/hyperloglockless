@@ -40,7 +40,7 @@ let count = hll.count();
 ## Accuracy
 hyperloglockless stays accurate while other implementations break down after millions of items.
 
-![acc](https://github.com/user-attachments/assets/135d552c-1d98-4a43-bae0-3d6d08cd9ef4)
+![err](https://github.com/user-attachments/assets/82690b1d-e9f0-4335-96c9-23914548ab65)
 
 
 ## Available Features
