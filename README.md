@@ -12,10 +12,10 @@ Lightning-fast, concurrent HyperLogLog for high-precision, low-memory cardinalit
 HyperLogLogs are a space efficient data structures for the "count-distinct problem", approximating the number of distinct elements in a multiset. [Paper](https://algo.inria.fr/flajolet/Publications/FlFuGaMe07.pdf).
 
 hyperloglockless is a lockless concurrent HyperLogLog. It's simpler, faster, and more accurate than other HyperLogLog implementations:
-   - 🧵**Concurrent:** It's a direct replacement for `RwLock<OtherHyperLogLog<K, V>>`. All methods take `&self` instead of modifying methods taking `&mut self`. This allows you to put a HyperLogLog in an `Arc<T>` and share it between threads while still being able to modify it.
+- 🧵**Concurrent:** It's a direct replacement for `RwLock<OtherHyperLogLog<V>>`. All methods take `&self` instead of modifying methods taking `&mut self`. This allows you to put a HyperLogLog in an `Arc<T>` and share it between threads while still being able to modify it.
 - ⚡**Fast:** Designed to be fast and simple in both single and multi-threaded scenarios.
-- 🎯**Accurate:** Stays extremely accurate beyond *trillions* of items while other implementations break down after millions of items.
-- 🔧**Flexible:** Can be configured with any size (other crates limit size to 65536 bytes!), hasher, or seed.
+- 🎯**Accurate:** Stays extremely accurate beyond *trillions* of elements while other implementations break down after millions.
+- 🔧**Flexible:** Can be configured with larger sizes (other crates limit size to 65536 bytes!), hasher, or seed.
 - ✅**Tested:** Is rigorously tested and compared in [these benchmarks](TODO).
 
 ## Usage

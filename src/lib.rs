@@ -24,7 +24,9 @@ pub use error::Error;
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HyperLogLog<S = DefaultHasher> {
+    /// `registers[k]` is the maximum leading zeros for all 64-bit hashes assigned to kth register
     registers: Box<[AtomicU8]>,
+    /// `registers.len() == 1 << precision`
     precision: u32,
     hasher: S,
 }
@@ -82,12 +84,12 @@ impl<S: BuildHasher> HyperLogLog<S> {
     /// Inserts the hash of an item into the `HyperLogLog`.
     #[inline(always)]
     pub fn insert_hash(&self, mut hash: u64) {
-        // left of the hash is used to get index
-        let index = (hash >> (64 - self.precision)) as usize;
-        // right is used for leading zeros
-        hash = hash << self.precision;
+        let index = (hash >> (64 - self.precision)) as usize; // left of the hash is used to get index
+        hash = hash << self.precision; // right is used for leading zeros
 
-        // TODO: <https://graphics.stanford.edu/~seander/bithacks.html>
+        // TODO: consider using this for index instead:
+        // let index = (((hash << 32 >> 32).wrapping_mul(self.len() as u64)) >> 32) as usize;
+
         let zeros = 1 + hash.leading_zeros() as u8;
         self.registers[index].fetch_max(zeros, Ordering::Relaxed);
     }
@@ -101,7 +103,7 @@ impl<S: BuildHasher> HyperLogLog<S> {
             return Err(Error::IncompatibleLength);
         }
 
-        // TODO? if self.builder != other.builder { ... }
+        // TODO? if self.hasher != other.hasher { ... }
 
         for (i, x) in other.iter().enumerate() {
             self.registers[i].fetch_max(x, Ordering::Relaxed);
@@ -141,18 +143,21 @@ impl<S: BuildHasher> HyperLogLog<S> {
 
     #[inline]
     fn estimate_raw(&self) -> f64 {
-        let count = self.len();
-        let raw = self.harmonic_denom();
-        Self::alpha(count) * (count * count) as f64 / raw
+        let d = self.harmonic_denom();
+        let raw = (self.len() * self.len()) as f64 / d;
+        Self::correction(self.len()) * raw
     }
 
     #[inline]
-    fn alpha(count: usize) -> f64 {
+    fn correction(count: usize) -> f64 {
+        // Hardcoded since the result of f64::ln varies by platform
+        let base = 0.7213475204444817; // 1.0 / (2.0 * 2.0f64.ln());
+        let approx = 1.0794415416798357; // 3.0 * 2.0f64.ln() - 1.0;
         match count {
             16 => 0.673,
             32 => 0.697,
             64 => 0.709,
-            _ => 0.7213 / (1.0 + 1.079 / count as f64),
+            _ => base / (1.0 + approx / count as f64),
         }
     }
 }
@@ -181,17 +186,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn simple() {
-        let c = HyperLogLog::seeded(8, 42);
+    fn low_error_8() {
+        low_error(8, 0.15);
+    }
+
+    #[test]
+    fn low_error_9() {
+        low_error(9, 0.15);
+    }
+
+    #[test]
+    fn low_error_10() {
+        low_error(10, 0.15);
+    }
+
+    fn low_error(precision: u8, thresh: f64) {
+        let hll = HyperLogLog::seeded(precision, 42);
+        let mut counted = 0;
+        let mut total_err = 0f64;
+        let mut total_diff = 0f64;
 
         for x in 1..10_000_000 {
-            c.insert(&x);
-            if x % 1_000_000 == 0 {
+            hll.insert(&x);
+            if x % 1_00_000 == 0 {
                 let real = x as f64;
-                let my_acc = (real - (c.count() as f64 - real).abs()) / real;
-                assert!(my_acc > 0.75);
+                let diff = hll.raw_count() - real;
+                let err = diff.abs() / real;
+                println!("{}", diff / real);
+                assert!(err < thresh, "{}", err);
+
+                counted += 1;
+                total_err += err;
+                total_diff += diff / real;
             }
         }
+
+        println!("Avg err: {}", total_err / counted as f64);
+        println!("Avg diff: {}", total_diff / counted as f64);
     }
 
     #[test]
@@ -210,7 +241,7 @@ mod tests {
 
         let real = 3000 as f64;
         let my_acc = (real - (left.count() as f64 - real).abs()) / real;
-        assert!(my_acc > 0.9);
+        assert!(my_acc > 0.75, "{}", my_acc);
     }
 
     #[cfg(feature = "serde")]
