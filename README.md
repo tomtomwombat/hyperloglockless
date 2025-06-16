@@ -5,15 +5,18 @@
 [![License: APACHE](https://img.shields.io/badge/License-Apache-blue.svg)](https://github.com/tomtomwombat/hyperloglockless/blob/main/LICENSE-APACHE)
 ![Downloads](https://img.shields.io/crates/d/hyperloglockless)
 
-Lightning fast concurrent HyperLogLog for Rust.
+Lightning-fast, concurrent HyperLogLog for high-precision, low-memory cardinality estimation.
 
 ## Overview
 
 HyperLogLogs are a space efficient data structures for the "count-distinct problem", approximating the number of distinct elements in a multiset. [Paper](https://algo.inria.fr/flajolet/Publications/FlFuGaMe07.pdf).
 
-hyperloglockless is a lockless concurrent HyperLogLog, making it a direct replacement for `RwLock<OtherHyperLogLog<K, V>>`. To accomplish these goals, all methods take `&self` instead of modifying methods taking `&mut self`. This allows you to put a HyperLogLog in an `Arc<T>` and share it between threads while still being able to modify it. HyperLogLog puts great effort into performance and aims to be as fast as possible, even in single threaded scenarios.
-
-hyperloglockless is also extremely accurate--it is able to count billions of items with 99.5% accuracy using only 65kb of memory.
+hyperloglockless is a lockless concurrent HyperLogLog. It's simpler, faster, and more accurate than other HyperLogLog implementations:
+   - 🧵**Concurrent:** It's a direct replacement for `RwLock<OtherHyperLogLog<K, V>>`. All methods take `&self` instead of modifying methods taking `&mut self`. This allows you to put a HyperLogLog in an `Arc<T>` and share it between threads while still being able to modify it.
+- ⚡**Fast:** Designed to be fast and simple in both single and multi-threaded scenarios.
+- 🎯**Accurate:** Stays extremely accurate beyond *trillions* of items while other implementations break down after millions of items.
+- 🔧**Flexible:** Can be configured with any size (other crates limit size to 65536 bytes!), hasher, or seed.
+- ✅**Tested:** Is rigorously tested and compared in [these benchmarks](TODO).
 
 ## Usage
 
@@ -22,7 +25,7 @@ hyperloglockless is also extremely accurate--it is able to count billions of ite
 [dependencies]
 hyperloglockless = "0.1.0"
 ```
-Basic usage:
+
 ```rust
 use hyperloglockless::HyperLogLog;
 
@@ -33,11 +36,11 @@ hll.insert("🦀");
 let count = hll.count();
 ```
 
-## Performance
+## Performance vs Others
 ![perf-single](https://github.com/user-attachments/assets/8b3df60a-5e42-4f70-b81e-68b3446ade83)
 ![multi-insert-perf](https://github.com/user-attachments/assets/93bf3b54-c4e1-4d33-a14d-b73aa947a851)
 
-## Accuracy
+## Accuracy vs Others
 hyperloglockless stays accurate while other implementations break down after millions of items.
 
 ![err](https://github.com/user-attachments/assets/82690b1d-e9f0-4335-96c9-23914548ab65)
