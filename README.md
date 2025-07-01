@@ -23,7 +23,7 @@ hyperloglockless is a lockless concurrent HyperLogLog. It's simpler, faster, and
 ```toml
 # Cargo.toml
 [dependencies]
-hyperloglockless = "0.1.0"
+hyperloglockless = "0.2.0"
 ```
 
 ```rust

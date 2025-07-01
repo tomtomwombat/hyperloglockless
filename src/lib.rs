@@ -116,13 +116,13 @@ impl<S: BuildHasher> HyperLogLog<S> {
     /// Returns the approximate number of elements in `self`.
     #[inline]
     pub fn raw_count(&self) -> f64 {
-        let mut raw = self.estimate_raw();
+        let raw = self.estimate_raw();
 
         // correction for small values
         if raw <= 2.5 * self.len() as f64 {
             let zeros = self.iter().map(|x| (x == 0) as usize).sum();
             if zeros != 0 {
-                raw = self.linear_count(zeros);
+                return self.linear_count(zeros);
             }
         }
         raw
@@ -241,8 +241,8 @@ mod tests {
             let mut before = HyperLogLog::seeded(precision, 42);
             before.extend(0..=1000);
 
-            let s = serde_json::to_vec(&before).unwrap();
-            let mut after: HyperLogLog = serde_json::from_slice(&s).unwrap();
+            let s = serde_cbor::to_vec(&before).unwrap();
+            let mut after: HyperLogLog = serde_cbor::from_slice(&s).unwrap();
             assert_eq!(before, after);
 
             before.extend(1000..=2000);
