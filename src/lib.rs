@@ -24,7 +24,7 @@ pub use error::Error;
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HyperLogLog<S = DefaultHasher> {
-    /// `registers[k]` is the maximum leading zeros for all 64-bit hashes assigned to kth register
+    /// `registers[k]` is the maximum trailing zeros for all 64-bit hashes assigned to kth register
     registers: Box<[AtomicU8]>,
     /// `registers.len() == 1 << precision`
     precision: u32,
@@ -83,15 +83,10 @@ impl<S: BuildHasher> HyperLogLog<S> {
 
     /// Inserts the hash of an item into the `HyperLogLog`.
     #[inline(always)]
-    pub fn insert_hash(&self, mut hash: u64) {
-        let index = (hash >> (64 - self.precision)) as usize; // left of the hash is used to get index
-        hash = hash << self.precision; // right is used for leading zeros
-
-        // TODO: consider using this for index instead:
-        // let index = (((hash << 32 >> 32).wrapping_mul(self.len() as u64)) >> 32) as usize;
-
-        let zeros = 1 + hash.leading_zeros() as u8;
-        self.registers[index].fetch_max(zeros, Ordering::Relaxed);
+    pub fn insert_hash(&self, hash: u64) {
+        let index = hash >> (64 - self.precision);
+        let zeros = 1 + hash.trailing_zeros() as u8;
+        self.registers[index as usize].fetch_max(zeros, Ordering::Relaxed);
     }
 
     /// Merges another `HyperLogLog` into `self`, updating the count.
@@ -112,13 +107,13 @@ impl<S: BuildHasher> HyperLogLog<S> {
         Ok(())
     }
 
-    /// Returns the approximate number of items in `self`.
+    /// Returns the approximate number of elements in `self`.
     #[inline]
     pub fn count(&self) -> usize {
         self.raw_count() as usize
     }
 
-    /// Returns the approximate number of items in `self`.
+    /// Returns the approximate number of elements in `self`.
     #[inline]
     pub fn raw_count(&self) -> f64 {
         let mut raw = self.estimate_raw();
@@ -137,14 +132,9 @@ impl<S: BuildHasher> HyperLogLog<S> {
     }
 
     #[inline]
-    fn harmonic_denom(&self) -> f64 {
-        self.iter().map(|x| 1.0 / (1u64 << x) as f64).sum()
-    }
-
-    #[inline]
     fn estimate_raw(&self) -> f64 {
-        let d = self.harmonic_denom();
-        let raw = (self.len() * self.len()) as f64 / d;
+        let denom: f64 = self.iter().map(|x| 1.0 / (1u64 << x) as f64).sum();
+        let raw = (self.len() * self.len()) as f64 / denom;
         Self::correction(self.len()) * raw
     }
 
@@ -212,7 +202,6 @@ mod tests {
                 let real = x as f64;
                 let diff = hll.raw_count() - real;
                 let err = diff.abs() / real;
-                println!("{}", diff / real);
                 assert!(err < thresh, "{}", err);
 
                 counted += 1;
@@ -221,8 +210,7 @@ mod tests {
             }
         }
 
-        println!("Avg err: {}", total_err / counted as f64);
-        println!("Avg diff: {}", total_diff / counted as f64);
+        assert!((total_err - total_diff).abs() / counted as f64 > 0.01);
     }
 
     #[test]

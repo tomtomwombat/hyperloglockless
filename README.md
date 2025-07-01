@@ -15,7 +15,7 @@ hyperloglockless is a lockless concurrent HyperLogLog. It's simpler, faster, and
 - 🧵**Concurrent:** It's a direct replacement for `RwLock<OtherHyperLogLog<V>>`. All methods take `&self` instead of modifying methods taking `&mut self`. This allows you to put a HyperLogLog in an `Arc<T>` and share it between threads while still being able to modify it.
 - ⚡**Fast:** Designed to be fast and simple in both single and multi-threaded scenarios.
 - 🎯**Accurate:** Stays extremely accurate beyond *trillions* of elements while other implementations break down after millions.
-- 🔧**Flexible:** Can be configured with larger sizes (other crates limit size to 65536 bytes!), hasher, or seed.
+- 🔧**Flexible:** Can be configured with any hasher or seed, and larger sizes.
 - ✅**Tested:** Is rigorously tested and compared in [these benchmarks](TODO).
 
 ## Usage
