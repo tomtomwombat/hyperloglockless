@@ -117,11 +117,13 @@ impl<S: BuildHasher> HyperLogLog<S> {
     #[inline]
     pub fn raw_count(&self) -> f64 {
         let mut raw = self.estimate_raw();
-        let zeros = self.iter().map(|x| (x == 0) as usize).sum();
 
         // correction for small values
-        if raw <= 2.5 * self.len() as f64 && zeros != 0 {
-            raw = self.linear_count(zeros);
+        if raw <= 2.5 * self.len() as f64 {
+            let zeros = self.iter().map(|x| (x == 0) as usize).sum();
+            if zeros != 0 {
+                raw = self.linear_count(zeros);
+            }
         }
         raw
     }
