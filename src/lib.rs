@@ -43,6 +43,22 @@ impl HyperLogLog {
     pub fn seeded(precision: u8, seed: u128) -> Self {
         Self::with_hasher(precision, DefaultHasher::seeded(&seed.to_be_bytes()))
     }
+
+    /// Returns the HyperLogLog precision that will have the error for calls to [`Self::count()`] and [`Self::raw_count()`].
+    #[inline]
+    pub fn precision_for_error(error: f64) -> u8 {
+        assert!(0.0 < error && error < 1.0);
+        let bias_constant = 1.0389617614136892; // (3.0 * 2.0f64.ln() - 1.0).sqrt();
+        (bias_constant / error).powf(2.0).log2().ceil() as u8
+    }
+
+    /// Returns the approximate error of [`Self::count()`] and [`Self::raw_count()`] given the precision of a [`HyperLogLog`].
+    #[inline]
+    pub fn error_for_precision(precision: u8) -> f64 {
+        assert!(0 < precision && precision < 64);
+        let bias_constant = 1.0389617614136892; // (3.0 * 2.0f64.ln() - 1.0).sqrt();
+        bias_constant / ((1u64 << precision) as f64).sqrt()
+    }
 }
 
 impl<S: BuildHasher> HyperLogLog<S> {
@@ -152,14 +168,20 @@ impl<S: BuildHasher> HyperLogLog<S> {
             _ => base / (1.0 + approx / count as f64),
         }
     }
+
+    /// Inserts all the items in `iter` into the `self`. Immutable version of [`Self::extend`].
+    #[inline]
+    pub fn insert_all<T: Hash, I: IntoIterator<Item = T>>(&self, iter: I) {
+        for val in iter {
+            self.insert(&val);
+        }
+    }
 }
 
 impl<T: Hash, S: BuildHasher> Extend<T> for HyperLogLog<S> {
     #[inline]
     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
-        for val in iter {
-            self.insert(&val);
-        }
+        self.insert_all(iter)
     }
 }
 
@@ -248,6 +270,15 @@ mod tests {
             before.extend(1000..=2000);
             after.extend(1000..=2000);
             assert_eq!(before, after);
+        }
+    }
+
+    #[test]
+    fn test_error_helpers() {
+        for precision in 4..=63 {
+            let err = HyperLogLog::error_for_precision(precision);
+            let prec = HyperLogLog::precision_for_error(err);
+            assert_eq!(prec, precision);
         }
     }
 }

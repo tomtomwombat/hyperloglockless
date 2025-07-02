@@ -12,11 +12,11 @@ Lightning-fast, concurrent HyperLogLog for high-precision, low-memory cardinalit
 HyperLogLogs are a space efficient data structures for the "count-distinct problem", approximating the number of distinct elements in a multiset. [Paper](https://algo.inria.fr/flajolet/Publications/FlFuGaMe07.pdf).
 
 hyperloglockless is a lockless concurrent HyperLogLog. It's simpler, faster, and more accurate than other HyperLogLog implementations:
-- ⚡**Fast:** Designed to be fast and simple in both single and multi-threaded scenarios.
-- 🎯**Accurate:** Empirically verified accuracy for *trillions* of elements; other implementations break down after millions.
-- 🔧**Flexible:** Can be configured with any hasher or seed, and larger sizes.
-- 🧵**Concurrent:** It's a direct replacement for `RwLock<OtherHyperLogLog<V>>`. All methods take `&self` instead of modifying methods taking `&mut self`. This allows you to put a HyperLogLog in an `Arc<T>` and share it between threads while still being able to modify it.
-- ✅**Tested:** Rigorously tested and compared in [these benchmarks](TODO).
+- ⚡ **Fast:** Designed to be fast and simple in both single and multi-threaded scenarios.
+- 🎯 **Accurate:** Empirically verified accuracy for *trillions* of elements; other implementations break down after millions.
+- 🔧 **Flexible:** Configurable with custom hashers, seeds, and more registers for higher precision.
+- 🧵 **Concurrent:** Drop-in replacement for `RwLock<OtherHyperLogLog<V>>`: all methods take `&self`, so you can wrap it in `Arc` and update it concurrently without `&mut`.
+- ✅ **Tested:** Rigorously tested and compared—[see benchmarks](TODO).
 
 ## Usage
 
@@ -30,11 +30,15 @@ A HyperLogLog with precision `p` uses `2^p` bytes of memory and has an error % o
 ```rust
 use hyperloglockless::HyperLogLog;
 
-let hll = HyperLogLog::new(16);
-hll.insert("42");
-hll.insert("🦀");
+let precision = HyperLogLog::precision_for_error(0.01); // 1% error
+assert_eq!(precision, 14);
 
-let count = hll.count();
+let hll = HyperLogLog::new(precision);
+hll.insert(&'🦀');
+hll.insert_all('a'..='z');
+
+let count = hll.count(); // ~27
+assert_eq!(hll.len(), 1 << precision); // 16384 bytes
 ```
 
 ## Performance vs Others
