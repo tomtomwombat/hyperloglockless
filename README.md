@@ -12,11 +12,11 @@ Lightning-fast, concurrent HyperLogLog for high-precision, low-memory cardinalit
 HyperLogLogs are a space efficient data structures for the "count-distinct problem", approximating the number of distinct elements in a multiset. [Paper](https://algo.inria.fr/flajolet/Publications/FlFuGaMe07.pdf).
 
 hyperloglockless is a lockless concurrent HyperLogLog. It's simpler, faster, and more accurate than other HyperLogLog implementations:
-- 🧵**Concurrent:** It's a direct replacement for `RwLock<OtherHyperLogLog<V>>`. All methods take `&self` instead of modifying methods taking `&mut self`. This allows you to put a HyperLogLog in an `Arc<T>` and share it between threads while still being able to modify it.
 - ⚡**Fast:** Designed to be fast and simple in both single and multi-threaded scenarios.
-- 🎯**Accurate:** Stays extremely accurate beyond *trillions* of elements while other implementations break down after millions.
+- 🎯**Accurate:** Empirically verified accuracy for *trillions* of elements; other implementations break down after millions.
 - 🔧**Flexible:** Can be configured with any hasher or seed, and larger sizes.
-- ✅**Tested:** Is rigorously tested and compared in [these benchmarks](TODO).
+- 🧵**Concurrent:** It's a direct replacement for `RwLock<OtherHyperLogLog<V>>`. All methods take `&self` instead of modifying methods taking `&mut self`. This allows you to put a HyperLogLog in an `Arc<T>` and share it between threads while still being able to modify it.
+- ✅**Tested:** Rigorously tested and compared in [these benchmarks](TODO).
 
 ## Usage
 
@@ -26,6 +26,7 @@ hyperloglockless is a lockless concurrent HyperLogLog. It's simpler, faster, and
 hyperloglockless = "0.2.0"
 ```
 
+A HyperLogLog with precision `p` uses `2^p` bytes and has an error % of roughly `104 / sqrt(2^p)`.
 ```rust
 use hyperloglockless::HyperLogLog;
 
