@@ -9,13 +9,13 @@ Lightning-fast, concurrent HyperLogLog for high-precision, low-memory cardinalit
 
 ## Overview
 
-HyperLogLogs are a space efficient data structures for the "count-distinct problem", approximating the number of distinct elements in a multiset. [Paper](https://algo.inria.fr/flajolet/Publications/FlFuGaMe07.pdf).
+HyperLogLogs are space efficient data structures for the "count-distinct problem", approximating the number of distinct elements in a multiset. [Paper](https://algo.inria.fr/flajolet/Publications/FlFuGaMe07.pdf).
 
 hyperloglockless is a lockless concurrent HyperLogLog. It's simpler, faster, and more accurate than other HyperLogLog implementations:
+- 🧵 **Concurrent:** Drop-in replacement for `RwLock<OtherHyperLogLog<V>>`: all methods take `&self`, so you can wrap it in `Arc` and update it concurrently without `&mut`.
 - ⚡ **Fast:** Designed to be fast and simple in both single and multi-threaded scenarios.
 - 🎯 **Accurate:** Empirically verified accuracy for *trillions* of elements; other implementations break down after millions.
 - 🔧 **Flexible:** Configurable with custom hashers, seeds, and more registers for higher precision.
-- 🧵 **Concurrent:** Drop-in replacement for `RwLock<OtherHyperLogLog<V>>`: all methods take `&self`, so you can wrap it in `Arc` and update it concurrently without `&mut`.
 - ✅ **Tested:** Rigorously tested and compared—[see benchmarks](TODO).
 
 ## Usage
@@ -42,13 +42,14 @@ assert_eq!(hll.len(), 1 << precision); // 16384 bytes
 ```
 
 ## Performance vs Others
-![perf-single](https://github.com/user-attachments/assets/8b3df60a-5e42-4f70-b81e-68b3446ade83)
-![multi-insert-perf](https://github.com/user-attachments/assets/93bf3b54-c4e1-4d33-a14d-b73aa947a851)
+hyperloglockless performs better in both a criterion micro-benchmark and while being shared across multiple threads.
+
+![perf](https://github.com/user-attachments/assets/f00d7fa6-e161-4b29-8e80-1e066c85bf65)
 
 ## Accuracy vs Others
 hyperloglockless stays accurate while other implementations break down after millions of items.
 
-![err](https://github.com/user-attachments/assets/82690b1d-e9f0-4335-96c9-23914548ab65)
+![err](https://github.com/user-attachments/assets/e2caf2da-35f2-4d82-bcb7-fb32b1419071)
 
 
 ## Available Features
