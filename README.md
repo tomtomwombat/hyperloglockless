@@ -26,7 +26,7 @@ hyperloglockless is a lockless concurrent HyperLogLog. It's simpler, faster, and
 hyperloglockless = "0.2.0"
 ```
 
-A HyperLogLog with precision `p` uses `2^p` bytes and has an error % of roughly `104 / sqrt(2^p)`.
+A HyperLogLog with precision `p` uses `2^p` bytes of memory and has an error % of roughly `104 / sqrt(2^p)`.
 ```rust
 use hyperloglockless::HyperLogLog;
 
