@@ -16,7 +16,7 @@ hyperloglockless is a lockless concurrent HyperLogLog. It's simpler, faster, and
 - ⚡ **Fast:** Designed to be fast and simple in both single and multi-threaded scenarios.
 - 🎯 **Accurate:** Empirically verified accuracy for *trillions* of elements; other implementations break down after millions.
 - 🔧 **Flexible:** Configurable with custom hashers, seeds, and more registers for higher precision.
-- ✅ **Tested:** Rigorously tested and compared—[see benchmarks](TODO).
+- ✅ **Tested:** Rigorously tested and compared—[see benchmarks](https://github.com/tomtomwombat/bench-hyperloglogs/tree/main).
 
 ## Usage
 
