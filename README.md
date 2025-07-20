@@ -16,14 +16,14 @@ hyperloglockless is a lockless concurrent HyperLogLog. It's simpler, faster, and
 - ⚡ **Fast:** Designed to be fast and simple in both single and multi-threaded scenarios.
 - 🎯 **Accurate:** Empirically verified accuracy for *trillions* of elements; other implementations break down after millions.
 - 🔧 **Flexible:** Configurable with custom hashers, seeds, and more registers for higher precision.
-- ✅ **Tested:** Rigorously tested and compared—[see benchmarks](https://github.com/tomtomwombat/bench-hyperloglogs/tree/main).
+- ✅ **Tested:** Rigorously tested with loom and [benchmarked](https://github.com/tomtomwombat/bench-hyperloglogs/tree/main).
 
 ## Usage
 
 ```toml
 # Cargo.toml
 [dependencies]
-hyperloglockless = "0.2.0"
+hyperloglockless = "0.3.0"
 ```
 
 A HyperLogLog with precision `p` uses `2^p` bytes of memory and has an error % of roughly `104 / sqrt(2^p)`.
@@ -55,8 +55,8 @@ hyperloglockless stays accurate while other implementations break down after mil
 ## Available Features
 
 - **`rand`** - Enabled by default, this has the `DefaultHasher` source its random state using `thread_rng()` instead of hardware sources. Getting entropy from a user-space source is considerably faster, but requires additional dependencies to achieve this. Disabling this feature by using `default-features = false` makes `DefaultHasher` source its entropy using `getrandom`, which will have a much simpler code footprint at the expense of speed.
-
 - **`serde`** - `HyperLogLog`s implement `Serialize` and `Deserialize` when possible.
+- **`loom`** - `HyperLogLog`s use [loom](https://github.com/tokio-rs/loom) atomics, making it compatible with loom testing.
 
 ## License
 

@@ -20,3 +20,5 @@ jobs:
       run: cargo build --verbose
     - name: Run tests
       run: cargo test --verbose
+      run: cargo test --verbose --features "serde"
+      run: cargo test loom --verbose --features "loom"
