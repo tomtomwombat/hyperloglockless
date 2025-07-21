@@ -33,7 +33,7 @@ use hyperloglockless::HyperLogLog;
 let precision = HyperLogLog::precision_for_error(0.01); // 1% error
 assert_eq!(precision, 14);
 
-let hll = HyperLogLog::new(precision);
+let mut hll = HyperLogLog::new(precision);
 hll.insert(&'🦀');
 hll.insert_all('a'..='z');
 

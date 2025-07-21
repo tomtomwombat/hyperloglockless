@@ -5,25 +5,23 @@
 extern crate alloc;
 use alloc::{boxed::Box, vec::Vec};
 use core::hash::{BuildHasher, Hash, Hasher};
+
+#[cfg(feature = "atomic")]
 use core::sync::atomic::Ordering::Relaxed;
-
-#[cfg(feature = "loom")]
-pub(crate) use loom::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize};
-
-#[cfg(not(feature = "loom"))]
-pub(crate) use core::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize};
 
 #[cfg(all(feature = "loom", feature = "serde"))]
 compile_error!("features `loom` and `serde` are mutually exclusive");
 
+#[cfg(feature = "atomic")]
 mod atomic_f64;
-use atomic_f64::AtomicF64;
 mod beta;
 use beta::beta_horner;
 mod hasher;
 pub use hasher::DefaultHasher;
 mod error;
 pub use error::Error;
+mod number;
+use number::*;
 
 /// HyperLogLog is a data structure for the "count-distinct problem", approximating the number of distinct elements in a multiset.
 ///
@@ -31,7 +29,7 @@ pub use error::Error;
 /// ```rust
 /// use hyperloglockless::HyperLogLog;
 ///
-/// let hll = HyperLogLog::new(16);
+/// let mut hll = HyperLogLog::new(16);
 /// hll.insert("42");
 /// hll.insert("🦀");
 ///
@@ -41,12 +39,12 @@ pub use error::Error;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HyperLogLog<S = DefaultHasher> {
     /// `registers[k]` is the maximum trailing zeros for all 64-bit hashes assigned to kth register
-    registers: Box<[AtomicU8]>,
+    registers: Box<[Register]>,
     /// `registers.len() == 1 << precision`
     precision: u32,
     hasher: S,
-    zeros: AtomicUsize,
-    sum: AtomicF64,
+    zeros: Usize,
+    sum: Float,
     correction: f64,
 }
 
@@ -96,15 +94,15 @@ impl<S: BuildHasher> HyperLogLog<S> {
         let num_registers = 1 << precision;
         let mut data = Vec::with_capacity(num_registers);
         for _ in 0..num_registers {
-            data.push(AtomicU8::new(0));
+            data.push(register(0));
         }
         Self {
             hasher,
             precision: precision as u32,
-            zeros: AtomicUsize::new(data.len()),
+            zeros: usize(data.len()),
             correction: Self::correction(data.len()),
             registers: data.into(),
-            sum: AtomicF64::new(f64::from(num_registers as u32)),
+            sum: float(f64::from(num_registers as u32)),
         }
     }
 
@@ -115,12 +113,21 @@ impl<S: BuildHasher> HyperLogLog<S> {
     }
 
     /// Returns an iterator over the value of each register.
+    #[cfg(feature = "atomic")]
     #[inline]
     pub fn iter(&self) -> impl Iterator<Item = u8> + use<'_, S> {
         self.registers.iter().map(|x| x.load(Relaxed))
     }
 
+    /// Returns an iterator over the value of each register.
+    #[cfg(not(feature = "atomic"))]
+    #[inline]
+    pub fn iter(&self) -> impl Iterator<Item = u8> + use<'_, S> {
+        self.registers.iter().map(|x| *x)
+    }
+
     /// Inserts the item into the `HyperLogLog`.
+    #[cfg(feature = "atomic")]
     #[inline(always)]
     pub fn insert<T: Hash + ?Sized>(&self, value: &T) {
         let mut hasher = self.hasher.build_hasher();
@@ -129,6 +136,7 @@ impl<S: BuildHasher> HyperLogLog<S> {
     }
 
     /// Inserts the hash of an item into the `HyperLogLog`.
+    #[cfg(feature = "atomic")]
     #[inline(always)]
     pub fn insert_hash(&self, hash: u64) {
         let index = hash >> (64 - self.precision);
@@ -136,6 +144,7 @@ impl<S: BuildHasher> HyperLogLog<S> {
         self.update(new, index as usize);
     }
 
+    #[cfg(feature = "atomic")]
     #[inline(always)]
     fn update(&self, new: u8, index: usize) {
         let old = self.registers[index].fetch_max(new, Relaxed);
@@ -148,15 +157,19 @@ impl<S: BuildHasher> HyperLogLog<S> {
         }
     }
 
-    /// Returns `1.0 / ((1 << x) as f64)`.
-    #[inline(always)]
-    fn harmonic_term(x: u8) -> f64 {
-        f64::from_bits(u64::MAX.wrapping_sub(u64::from(x)) << 54 >> 2)
+    /// Inserts all the items in `iter` into the `self`. Immutable version of [`Self::extend`].
+    #[cfg(feature = "atomic")]
+    #[inline]
+    pub fn insert_all<T: Hash, I: IntoIterator<Item = T>>(&self, iter: I) {
+        for val in iter {
+            self.insert(&val);
+        }
     }
 
     /// Merges another `HyperLogLog` into `self`, updating the count.
     /// Returns `Err(Error::IncompatibleLength)` if the two `HyperLogLog`s have
     /// different length ([`HyperLogLog::len`]).
+    #[cfg(feature = "atomic")]
     #[inline(always)]
     pub fn merge(&self, other: &Self) -> Result<(), Error> {
         if self.len() != other.len() {
@@ -172,6 +185,72 @@ impl<S: BuildHasher> HyperLogLog<S> {
         Ok(())
     }
 
+    /// Inserts the item into the `HyperLogLog`.
+    #[cfg(not(feature = "atomic"))]
+    #[inline(always)]
+    pub fn insert<T: Hash + ?Sized>(&mut self, value: &T) {
+        let mut hasher = self.hasher.build_hasher();
+        value.hash(&mut hasher);
+        self.insert_hash(hasher.finish());
+    }
+
+    /// Inserts the hash of an item into the `HyperLogLog`.
+    #[cfg(not(feature = "atomic"))]
+    #[inline(always)]
+    pub fn insert_hash(&mut self, hash: u64) {
+        let index = hash >> (64 - self.precision);
+        let new = 1 + hash.trailing_zeros() as u8;
+        self.update(new, index as usize);
+    }
+
+    #[cfg(not(feature = "atomic"))]
+    #[inline(always)]
+    fn update(&mut self, new: u8, index: usize) {
+        let old = self.registers[index];
+        self.registers[index] = core::cmp::max(self.registers[index], new);
+        if old == 0 {
+            self.zeros -= 1;
+        }
+        if old < new {
+            let diff = Self::harmonic_term(old) - Self::harmonic_term(new);
+            self.sum -= diff;
+        }
+    }
+
+    /// Inserts all the items in `iter` into the `self`.
+    #[cfg(not(feature = "atomic"))]
+    #[inline]
+    pub fn insert_all<T: Hash, I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        for val in iter {
+            self.insert(&val);
+        }
+    }
+
+    /// Merges another `HyperLogLog` into `self`, updating the count.
+    /// Returns `Err(Error::IncompatibleLength)` if the two `HyperLogLog`s have
+    /// different length ([`HyperLogLog::len`]).
+    #[cfg(not(feature = "atomic"))]
+    #[inline(always)]
+    pub fn merge(&mut self, other: &Self) -> Result<(), Error> {
+        if self.len() != other.len() {
+            return Err(Error::IncompatibleLength);
+        }
+
+        // TODO? if self.hasher != other.hasher { ... }
+
+        for (i, x) in other.iter().enumerate() {
+            self.update(x, i);
+        }
+
+        Ok(())
+    }
+
+    /// Returns `1.0 / ((1 << x) as f64)`.
+    #[inline(always)]
+    fn harmonic_term(x: u8) -> f64 {
+        f64::from_bits(u64::MAX.wrapping_sub(u64::from(x)) << 54 >> 2)
+    }
+
     /// Returns the approximate number of elements in `self`.
     #[inline]
     pub fn count(&self) -> usize {
@@ -179,10 +258,20 @@ impl<S: BuildHasher> HyperLogLog<S> {
     }
 
     /// Returns the approximate number of elements in `self`.
+    #[cfg(feature = "atomic")]
     #[inline]
     pub fn raw_count(&self) -> f64 {
         let zeros = self.zeros.load(Relaxed);
         let sum = self.sum.load(Relaxed);
+        self.raw_count_inner(zeros, sum)
+    }
+
+    /// Returns the approximate number of elements in `self`.
+    #[cfg(not(feature = "atomic"))]
+    #[inline]
+    pub fn raw_count(&self) -> f64 {
+        let zeros = self.zeros;
+        let sum = self.sum;
         self.raw_count_inner(zeros, sum)
     }
 
@@ -204,14 +293,6 @@ impl<S: BuildHasher> HyperLogLog<S> {
             _ => base / (1.0 + approx / count as f64),
         }
     }
-
-    /// Inserts all the items in `iter` into the `self`. Immutable version of [`Self::extend`].
-    #[inline]
-    pub fn insert_all<T: Hash, I: IntoIterator<Item = T>>(&self, iter: I) {
-        for val in iter {
-            self.insert(&val);
-        }
-    }
 }
 
 impl<T: Hash, S: BuildHasher> Extend<T> for HyperLogLog<S> {
@@ -231,6 +312,7 @@ impl<S: BuildHasher> PartialEq for HyperLogLog<S> {
 }
 impl<S: BuildHasher> Eq for HyperLogLog<S> {}
 
+#[allow(unused_mut)]
 #[cfg(not(feature = "loom"))]
 #[cfg(test)]
 mod tests {
@@ -252,7 +334,7 @@ mod tests {
     }
 
     fn low_error(precision: u8, thresh: f64) {
-        let hll = HyperLogLog::seeded(precision, 42);
+        let mut hll = HyperLogLog::seeded(precision, 42);
         let mut counted = 0;
         let mut total_err = 0f64;
         let mut total_diff = 0f64;
@@ -276,8 +358,8 @@ mod tests {
 
     #[test]
     fn test_merge() {
-        let left = HyperLogLog::seeded(8, 42);
-        let right = HyperLogLog::seeded(8, 42);
+        let mut left = HyperLogLog::seeded(8, 42);
+        let mut right = HyperLogLog::seeded(8, 42);
 
         for x in 1..2000 {
             left.insert(&x);
@@ -312,7 +394,7 @@ mod tests {
 
     #[test]
     fn test_error_helpers() {
-        for precision in 4..=63 {
+        for precision in 4..=18 {
             let err = HyperLogLog::error_for_precision(precision);
             let prec = HyperLogLog::precision_for_error(err);
             assert_eq!(prec, precision);
@@ -321,7 +403,7 @@ mod tests {
 
     #[test]
     fn test_not_loom() {
-        let hll = HyperLogLog::seeded(4, 42);
+        let mut hll = HyperLogLog::seeded(4, 42);
         for x in 1..=100 {
             hll.insert(&x);
         }

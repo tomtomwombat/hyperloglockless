@@ -16,7 +16,7 @@ readme = "README.md"
 maintenance = { status = "actively-developed" }
 
 [features]
-default = ["atomic", "rand"]
+default = ["rand"]
 loom = ["dep:loom"]
 atomic = []
 rand = ["dep:rand"]
