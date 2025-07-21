@@ -1,6 +1,6 @@
 #![allow(rustdoc::bare_urls)]
 #![doc = include_str!("../README.md")]
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
 
 extern crate alloc;
 use alloc::{boxed::Box, vec::Vec};
@@ -22,6 +22,8 @@ mod error;
 pub use error::Error;
 mod number;
 use number::*;
+mod math;
+use math::*;
 
 /// HyperLogLog is a data structure for the "count-distinct problem", approximating the number of distinct elements in a multiset.
 ///
@@ -36,6 +38,7 @@ use number::*;
 /// let count = hll.count();
 /// ```
 #[derive(Debug)]
+#[cfg_attr(not(feature = "atomic"), derive(Clone))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HyperLogLog<S = DefaultHasher> {
     /// `registers[k]` is the maximum trailing zeros for all 64-bit hashes assigned to kth register
@@ -66,7 +69,7 @@ impl HyperLogLog {
     pub fn precision_for_error(error: f64) -> u8 {
         assert!(0.0 < error && error < 1.0);
         let bias_constant = 1.0389617614136892; // (3.0 * 2.0f64.ln() - 1.0).sqrt();
-        (bias_constant / error).powf(2.0).log2().ceil() as u8
+        ceil(log2(pow(bias_constant / error, 2.0))) as u8
     }
 
     /// Returns the approximate error of [`Self::count()`] and [`Self::raw_count()`] given the precision of a [`HyperLogLog`].
@@ -74,7 +77,7 @@ impl HyperLogLog {
     pub fn error_for_precision(precision: u8) -> f64 {
         Self::validate_precision(precision);
         let bias_constant = 1.0389617614136892; // (3.0 * 2.0f64.ln() - 1.0).sqrt();
-        bias_constant / ((1u64 << precision) as f64).sqrt()
+        bias_constant / sqrt((1u64 << precision) as f64)
     }
 }
 
@@ -312,11 +315,35 @@ impl<S: BuildHasher> PartialEq for HyperLogLog<S> {
 }
 impl<S: BuildHasher> Eq for HyperLogLog<S> {}
 
+#[cfg(feature = "atomic")]
+impl<S: BuildHasher + Clone> Clone for HyperLogLog<S> {
+    fn clone(&self) -> Self {
+        Self {
+            hasher: self.hasher.clone(),
+            precision: self.precision,
+            zeros: usize(self.zeros.load(Relaxed)),
+            correction: self.correction,
+            registers: self.iter().map(register).collect::<Vec<_>>().into(),
+            sum: float(self.sum.load(Relaxed)),
+        }
+    }
+}
+
 #[allow(unused_mut)]
 #[cfg(not(feature = "loom"))]
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_clone() {
+        let mut hll = HyperLogLog::seeded(4, 42);
+        hll.insert_all(1..10);
+        let mut cloned = hll.clone();
+        assert_eq!(hll, cloned);
+        cloned.insert(&42);
+        assert!(hll != cloned);
+    }
 
     #[test]
     fn low_error_8() {
@@ -400,51 +427,41 @@ mod tests {
             assert_eq!(prec, precision);
         }
     }
-
-    #[test]
-    fn test_not_loom() {
-        let mut hll = HyperLogLog::seeded(4, 42);
-        for x in 1..=100 {
-            hll.insert(&x);
-        }
-
-        for x in 1..=8 {
-            hll.insert(&x);
-        }
-        assert_eq!(hll.count(), 84);
-    }
 }
 
 #[cfg(feature = "loom")]
 #[cfg(test)]
 mod loom_tests {
     use super::*;
+    use core::sync::atomic::Ordering;
 
     #[test]
     fn test_loom() {
         loom::model(|| {
-            let hll = HyperLogLog::seeded(4, 42);
-            for x in 8..=100 {
-                hll.insert(&x);
-            }
-            let arc_hll = loom::sync::Arc::new(hll);
-
-            let handles: Vec<_> = (1..=2)
-                .map(|_| {
-                    let v = arc_hll.clone();
-                    loom::thread::spawn(move || {
-                        for x in 1..=8 {
-                            v.insert(&x);
-                        }
-                    })
+            let hll = loom::sync::Arc::new(HyperLogLog::seeded(4, 42));
+            let expected = HyperLogLog::seeded(4, 42);
+            expected.insert_all(1..=4);
+            let handles: Vec<_> = [(1..=2), (2..=4)]
+                .into_iter()
+                .map(|data| {
+                    let v = hll.clone();
+                    loom::thread::spawn(move || v.insert_all(data))
                 })
                 .collect();
 
             for handle in handles {
                 handle.join().unwrap();
             }
-
-            assert_eq!(arc_hll.count(), 84);
+            let res = hll.iter().collect::<Vec<_>>();
+            assert_eq!(res, expected.iter().collect::<Vec<_>>());
+            assert_eq!(
+                hll.zeros.load(Ordering::SeqCst),
+                expected.zeros.load(Ordering::SeqCst)
+            );
+            assert_eq!(
+                hll.sum.load(Ordering::SeqCst),
+                expected.sum.load(Ordering::SeqCst)
+            );
         });
     }
 }

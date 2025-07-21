@@ -18,7 +18,9 @@ jobs:
     - uses: actions/checkout@v4
     - name: Build
       run: cargo build --verbose
+    - name: Install cargo-hack
+      run: cargo install cargo-hack
     - name: Run tests
-      run: cargo test --verbose
-      run: cargo test --verbose --features "serde"
-      run: cargo test loom --verbose --features "loom"
+      run: cargo hack test --verbose --feature-powerset --exclude-features loom
+    - name: Run loom
+      run: cargo hack test loom --lib --bins --tests --feature-powerset --exclude-features serde,rand,default

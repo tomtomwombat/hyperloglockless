@@ -9,7 +9,7 @@ pub(crate) fn beta_horner(zeros: usize, precision: u32) -> f64 {
     }
     let beta = BETA[precision as usize - 4];
     let zeros_f = zeros as f64;
-    let zl = (zeros_f + 1.0).ln();
+    let zl = crate::math::ln(zeros_f + 1.0);
     let mut res = beta[7];
     for i in (1..7).rev() {
         res = res * zl + beta[i];
