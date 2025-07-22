@@ -1,4 +1,4 @@
-use crate::number::AtomicU64;
+use crate::AtomicU64;
 use core::sync::atomic::Ordering;
 
 #[derive(Debug)]

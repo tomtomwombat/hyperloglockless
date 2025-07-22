@@ -5,14 +5,14 @@
 [![License: APACHE](https://img.shields.io/badge/License-Apache-blue.svg)](https://github.com/tomtomwombat/hyperloglockless/blob/main/LICENSE-APACHE)
 ![Downloads](https://img.shields.io/crates/d/hyperloglockless)
 
-Lightning-fast, concurrent HyperLogLog for high-precision, low-memory cardinality estimation.
+The fastest HyperLogLogs in Rust with bias correction and concurrency support. Used for high-precision cardinality estimation.
 
 ## Overview
 
 HyperLogLogs are space efficient data structures for the "count-distinct problem", approximating the number of distinct elements in a multiset. [Paper](https://algo.inria.fr/flajolet/Publications/FlFuGaMe07.pdf).
 
-hyperloglockless is a lockless concurrent HyperLogLog. It's simpler, faster, and more accurate than other HyperLogLog implementations:
-- 🧵 **Concurrent:** Drop-in replacement for `RwLock<OtherHyperLogLog<V>>`: all methods take `&self`, so you can wrap it in `Arc` and update it concurrently without `&mut`.
+hyperloglockless offers a lockless concurrent HyperLogLog and a single threaded counterpart. They're simpler, faster, and more accurate than other HyperLogLog implementations:
+- 🧵 **Concurrent:** `AtomicHyperLogLog` is a drop-in replacement for `RwLock<OtherHyperLogLog>`: all methods take `&self`, so you can wrap it in `Arc` and update it concurrently without `&mut`.
 - ⚡ **Fast:** Designed to be fast and simple in both single and multi-threaded scenarios.
 - 🎯 **Accurate:** Empirically verified accuracy for *trillions* of elements; other implementations break down after millions.
 - 🔧 **Flexible:** Configurable with custom hashers, seeds, and more registers for higher precision.
@@ -21,7 +21,6 @@ hyperloglockless is a lockless concurrent HyperLogLog. It's simpler, faster, and
 ## Usage
 
 ```toml
-# Cargo.toml
 [dependencies]
 hyperloglockless = "0.3.0"
 ```
@@ -30,7 +29,7 @@ A HyperLogLog with precision `p` uses `2^p` bytes of memory and has an error % o
 ```rust
 use hyperloglockless::HyperLogLog;
 
-let precision = HyperLogLog::precision_for_error(0.01); // 1% error
+let precision = hyperloglockless::precision_for_error(0.01); // 1% error
 assert_eq!(precision, 14);
 
 let mut hll = HyperLogLog::new(precision);
@@ -39,6 +38,13 @@ hll.insert_all('a'..='z');
 
 let count = hll.count(); // ~27
 assert_eq!(hll.len(), 1 << precision); // 16384 bytes
+```
+```rust
+use hyperloglockless::AtomicHyperLogLog;
+
+let hll = AtomicHyperLogLog::new(14);
+hll.insert(&'🦀');
+hll.insert_all('a'..='z');
 ```
 
 ## Performance vs Others
@@ -55,8 +61,8 @@ hyperloglockless stays accurate while other implementations break down after mil
 ## Available Features
 
 - **`rand`** - Enabled by default, this has the `DefaultHasher` source its random state using `thread_rng()` instead of hardware sources. Getting entropy from a user-space source is considerably faster, but requires additional dependencies to achieve this. Disabling this feature by using `default-features = false` makes `DefaultHasher` source its entropy using `getrandom`, which will have a much simpler code footprint at the expense of speed.
-- **`serde`** - `HyperLogLog`s implement `Serialize` and `Deserialize` when possible.
-- **`loom`** - `HyperLogLog`s use [loom](https://github.com/tokio-rs/loom) atomics, making it compatible with loom testing.
+- **`serde`** - HyperLogLogs implement `Serialize` and `Deserialize` when possible.
+- **`loom`** - `AtomicHyperLogLog`s use [loom](https://github.com/tokio-rs/loom) atomics, making it compatible with loom testing.
 
 ## License
 

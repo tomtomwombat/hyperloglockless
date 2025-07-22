@@ -4,7 +4,7 @@ version = "0.3.0"
 edition = "2021"
 rust-version = "1.70.0"
 authors = ["tomtomwombat"]
-description = "Lightning-fast, concurrent, and bias-corrected HyperLogLog for Rust."
+description = "The fastest HyperLogLogs in Rust with bias correction and concurrency support."
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/tomtomwombat/hyperloglockless/"
 repository = "https://github.com/tomtomwombat/hyperloglockless/"
@@ -17,9 +17,8 @@ maintenance = { status = "actively-developed" }
 
 [features]
 default = ["std", "rand"]
-atomic = []
 std = []
-loom = ["atomic", "dep:loom"]
+loom = ["dep:loom"]
 rand = ["dep:rand"]
 serde = ["dep:serde", "siphasher/serde_std"]
 
