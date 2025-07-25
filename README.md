@@ -5,7 +5,7 @@
 [![License: APACHE](https://img.shields.io/badge/License-Apache-blue.svg)](https://github.com/tomtomwombat/hyperloglockless/blob/main/LICENSE-APACHE)
 ![Downloads](https://img.shields.io/crates/d/hyperloglockless)
 
-The fastest HyperLogLogs in Rust with bias correction and concurrency support. Used for high-precision cardinality estimation.
+High-performance HyperLogLog with bias correction and full concurrency support. Used for accurate and space-efficient cardinality estimation.
 
 ## Overview
 
@@ -15,7 +15,6 @@ hyperloglockless offers a lockless concurrent HyperLogLog and a single threaded 
 - 🧵 **Concurrent:** `AtomicHyperLogLog` is a drop-in replacement for `RwLock<OtherHyperLogLog>`: all methods take `&self`, so you can wrap it in `Arc` and update it concurrently without `&mut`.
 - ⚡ **Fast:** Designed to be fast and simple in both single and multi-threaded scenarios.
 - 🎯 **Accurate:** Empirically verified accuracy for *trillions* of elements; other implementations break down after millions.
-- 🔧 **Flexible:** Configurable with custom hashers, seeds, and more registers for higher precision.
 - ✅ **Tested:** Rigorously tested with loom and [benchmarked](https://github.com/tomtomwombat/bench-hyperloglogs/tree/main).
 
 ## Usage
@@ -39,6 +38,8 @@ hll.insert_all('a'..='z');
 let count = hll.count(); // ~27
 assert_eq!(hll.len(), 1 << precision); // 16384 bytes
 ```
+
+Full concurrency support: `AtomicHyperLogLog` is a drop-in replacement for `RwLock<OtherHyperLogLog>`: all methods take `&self`.
 ```rust
 use hyperloglockless::AtomicHyperLogLog;
 
@@ -60,7 +61,7 @@ Both `hyperloglockless::HyperLogLog` and `hyperloglockless::AtomicHyperLogLog` a
 
 
 ## Accuracy vs Others
-hyperloglockless stays accurate while other implementations break down after millions of items.
+hyperloglockless stays consistently accurate while other implementations break down after millions of items.
 
 <img width="1920" height="967" alt="err" src="https://github.com/user-attachments/assets/2a1042c2-20c0-4c3b-866a-8b604cb3690e" />
 

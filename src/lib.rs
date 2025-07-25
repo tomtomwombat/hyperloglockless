@@ -187,7 +187,7 @@ impl<S: BuildHasher> HyperLogLog<S> {
         self.registers.iter().map(|x| *x)
     }
 
-    /// Inserts the item into the `HyperLogLog`.
+    /// Inserts the item into the HyperLogLog.
     #[inline(always)]
     pub fn insert<T: Hash + ?Sized>(&mut self, value: &T) {
         let mut hasher = self.hasher.build_hasher();
@@ -195,7 +195,7 @@ impl<S: BuildHasher> HyperLogLog<S> {
         self.insert_hash(hasher.finish());
     }
 
-    /// Inserts the hash of an item into the `HyperLogLog`.
+    /// Inserts the hash of an item into the HyperLogLog.
     #[inline(always)]
     pub fn insert_hash(&mut self, hash: u64) {
         let index = hash >> (64 - self.precision);
@@ -224,9 +224,9 @@ impl<S: BuildHasher> HyperLogLog<S> {
         }
     }
 
-    /// Merges another `HyperLogLog` into `self`, updating the count.
-    /// Returns `Err(Error::IncompatibleLength)` if the two `HyperLogLog`s have
-    /// different length ([`HyperLogLog::len`]).
+    /// Merges another HyperLogLog into `self`, updating the count.
+    /// Returns `Err(Error::IncompatibleLength)` if the two HyperLogLogs have
+    /// different length ([`Self::len`]).
     #[inline(always)]
     pub fn merge(&mut self, other: &Self) -> Result<(), Error> {
         if self.len() != other.len() {
@@ -258,7 +258,7 @@ impl<S: BuildHasher> AtomicHyperLogLog<S> {
         self.registers.iter().map(|x| x.load(Relaxed))
     }
 
-    /// Inserts the item into the `HyperLogLog`.
+    /// Inserts the item into the HyperLogLog.
     #[inline(always)]
     pub fn insert<T: Hash + ?Sized>(&self, value: &T) {
         let mut hasher = self.hasher.build_hasher();
@@ -266,7 +266,7 @@ impl<S: BuildHasher> AtomicHyperLogLog<S> {
         self.insert_hash(hasher.finish());
     }
 
-    /// Inserts the hash of an item into the `HyperLogLog`.
+    /// Inserts the hash of an item into the HyperLogLog.
     #[inline(always)]
     pub fn insert_hash(&self, hash: u64) {
         let index = hash >> (64 - self.precision);
@@ -294,9 +294,9 @@ impl<S: BuildHasher> AtomicHyperLogLog<S> {
         }
     }
 
-    /// Merges another `HyperLogLog` into `self`, updating the count.
-    /// Returns `Err(Error::IncompatibleLength)` if the two `HyperLogLog`s have
-    /// different length ([`HyperLogLog::len`]).
+    /// Merges another HyperLogLog into `self`, updating the count.
+    /// Returns `Err(Error::IncompatibleLength)` if the two HyperLogLogs have
+    /// different length ([`Self::len`]).
     #[inline(always)]
     pub fn merge(&self, other: &Self) -> Result<(), Error> {
         if self.len() != other.len() {
