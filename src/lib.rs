@@ -183,7 +183,7 @@ impl_common!(AtomicHyperLogLog);
 impl<S: BuildHasher> HyperLogLog<S> {
     /// Returns an iterator over the value of each register.
     #[inline]
-    pub fn iter(&self) -> impl Iterator<Item = u8> + use<'_, S> {
+    pub fn iter(&self) -> impl Iterator<Item = u8> + '_ {
         self.registers.iter().map(|x| *x)
     }
 
@@ -254,7 +254,7 @@ impl<S: BuildHasher> HyperLogLog<S> {
 impl<S: BuildHasher> AtomicHyperLogLog<S> {
     /// Returns an iterator over the value of each register.
     #[inline]
-    pub fn iter(&self) -> impl Iterator<Item = u8> + use<'_, S> {
+    pub fn iter(&self) -> impl Iterator<Item = u8> + '_ {
         self.registers.iter().map(|x| x.load(Relaxed))
     }
 

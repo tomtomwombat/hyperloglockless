@@ -24,3 +24,18 @@ jobs:
       run: cargo hack test --verbose --feature-powerset --exclude-features loom
     - name: Run loom
       run: cargo hack test loom --lib --bins --tests --feature-powerset --exclude-features serde,rand,default
+  
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: "1.70"
+          override: true
+      - name: Build
+        run: cargo build --verbose
+      - name: Install cargo-hack
+        run: cargo install cargo-hack
+      - name: Run tests
+        run: cargo hack test --verbose --feature-powerset --exclude-features loom

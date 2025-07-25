@@ -7,7 +7,7 @@ pub struct AtomicF64(AtomicU64);
 impl AtomicF64 {
     #[cfg(not(feature = "loom"))]
     #[inline]
-    pub const fn new(float: f64) -> Self {
+    pub fn new(float: f64) -> Self {
         Self(AtomicU64::new(u64::from_be_bytes(float.to_be_bytes())))
     }
 
