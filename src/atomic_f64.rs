@@ -1,3 +1,5 @@
+//! Adapted from <https://github.com/thomcc/atomic_float>.
+
 use crate::AtomicU64;
 use core::sync::atomic::Ordering;
 
@@ -8,12 +10,12 @@ impl AtomicF64 {
     #[cfg(not(feature = "loom"))]
     #[inline]
     pub fn new(float: f64) -> Self {
-        Self(AtomicU64::new(u64::from_be_bytes(float.to_be_bytes())))
+        Self(AtomicU64::new(u64::from_ne_bytes(float.to_ne_bytes())))
     }
 
     #[cfg(feature = "loom")]
     pub fn new(float: f64) -> Self {
-        Self(AtomicU64::new(u64::from_be_bytes(float.to_be_bytes())))
+        Self(AtomicU64::new(u64::from_ne_bytes(float.to_ne_bytes())))
     }
 
     #[inline]
@@ -25,22 +27,12 @@ impl AtomicF64 {
     pub fn fetch_sub(&self, val: f64, ordering: Ordering) -> f64 {
         let int = self
             .0
-            .fetch_update(ordering, downgrade(ordering), |prev| {
+            .fetch_update(ordering, ordering, |prev| {
                 let new = f64::from_bits(prev) - val;
-                Some(u64::from_be_bytes(new.to_be_bytes()))
+                Some(u64::from_ne_bytes(new.to_ne_bytes()))
             })
             .unwrap();
         f64::from_bits(int)
-    }
-}
-
-#[inline]
-fn downgrade(order: Ordering) -> Ordering {
-    match order {
-        Ordering::Release | Ordering::Relaxed => Ordering::Relaxed,
-        Ordering::Acquire | Ordering::AcqRel => Ordering::Acquire,
-        Ordering::SeqCst => Ordering::SeqCst,
-        _ => todo!(),
     }
 }
 
@@ -50,7 +42,7 @@ impl serde::Serialize for AtomicF64 {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_f64(self.load(Ordering::SeqCst))
+        serializer.serialize_f64(self.load(Ordering::Relaxed))
     }
 }
 

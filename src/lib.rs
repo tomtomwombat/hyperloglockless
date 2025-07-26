@@ -479,7 +479,6 @@ impl_tests!(atomic, AtomicHyperLogLog);
 #[cfg(test)]
 mod loom_tests {
     use super::*;
-    use core::sync::atomic::Ordering;
 
     #[test]
     fn test_loom() {
@@ -500,14 +499,8 @@ mod loom_tests {
             }
             let res = hll.iter().collect::<Vec<_>>();
             assert_eq!(res, expected.iter().collect::<Vec<_>>());
-            assert_eq!(
-                hll.zeros.load(Ordering::SeqCst),
-                expected.zeros.load(Ordering::SeqCst)
-            );
-            assert_eq!(
-                hll.sum.load(Ordering::SeqCst),
-                expected.sum.load(Ordering::SeqCst)
-            );
+            assert_eq!(hll.zeros.load(Relaxed), expected.zeros.load(Relaxed));
+            assert_eq!(hll.sum.load(Relaxed), expected.sum.load(Relaxed));
         });
     }
 }
