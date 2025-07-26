@@ -51,19 +51,18 @@ hll.insert_all('a'..='z');
 ## Single-Threaded Performance vs Others
 Both `hyperloglockless::HyperLogLog` and `hyperloglockless::AtomicHyperLogLog` are extremely fast for both insert and count calls.
 
-<img width="1920" height="967" alt="insert" src="https://github.com/user-attachments/assets/a8ad464a-3d38-4bd5-b0c0-dd9a701484bd" />
-<img width="1920" height="967" alt="count" src="https://github.com/user-attachments/assets/487f2448-b14a-4383-86f1-b41c79c5967c" />
+![fp-micro](https://github.com/user-attachments/assets/a8ad464a-3d38-4bd5-b0c0-dd9a701484bd)
+![fp-micro](https://github.com/user-attachments/assets/487f2448-b14a-4383-86f1-b41c79c5967c)
 
 ## Multi-Threaded Performance vs Others
 `hyperloglockless::AtomicHyperLogLog` does not require any locking and therefore avoids thread contention.
 
-<img width="1920" height="967" alt="multi2" src="https://github.com/user-attachments/assets/a0868670-d31f-4cd8-8611-5dcf0e55b5ad" />
-
+![fp-micro](https://github.com/user-attachments/assets/a0868670-d31f-4cd8-8611-5dcf0e55b5ad)
 
 ## Accuracy vs Others
 hyperloglockless stays consistently accurate while other implementations break down after millions of items.
 
-<img width="1920" height="967" alt="err" src="https://github.com/user-attachments/assets/2a1042c2-20c0-4c3b-866a-8b604cb3690e" />
+![fp-micro](https://github.com/user-attachments/assets/2a1042c2-20c0-4c3b-866a-8b604cb3690e)
 
 ## Available Features
 
