@@ -228,7 +228,7 @@ impl<S: BuildHasher> HyperLogLog<S> {
     /// Returns `Err(Error::IncompatibleLength)` if the two HyperLogLogs have
     /// different length ([`Self::len`]).
     #[inline(always)]
-    pub fn merge(&mut self, other: &Self) -> Result<(), Error> {
+    pub fn union(&mut self, other: &Self) -> Result<(), Error> {
         if self.len() != other.len() {
             return Err(Error::IncompatibleLength);
         }
@@ -298,7 +298,7 @@ impl<S: BuildHasher> AtomicHyperLogLog<S> {
     /// Returns `Err(Error::IncompatibleLength)` if the two HyperLogLogs have
     /// different length ([`Self::len`]).
     #[inline(always)]
-    pub fn merge(&self, other: &Self) -> Result<(), Error> {
+    pub fn union(&self, other: &Self) -> Result<(), Error> {
         if self.len() != other.len() {
             return Err(Error::IncompatibleLength);
         }
@@ -396,36 +396,53 @@ macro_rules! impl_tests {
 
             #[test]
             fn test_low_error() {
-                for (p, thresh) in [(8, 0.15), (9, 0.15), (10, 0.15)] {
-                    low_error(p, thresh);
+                for p in 4..=18 {
+                    low_error(p);
                 }
             }
 
-            fn low_error(precision: u8, thresh: f64) {
-                let mut hll = $name::seeded(precision, 42);
+            fn low_error(precision: u8) {
+                let thresh = error_for_precision(precision) * 1.20; // within 20% of the expected error
+
                 let mut counted = 0;
                 let mut total_err = 0f64;
                 let mut total_diff = 0f64;
 
-                for x in 1..10_000_000 {
-                    hll.insert(&x);
-                    if x % 1_00_000 == 0 {
-                        let real = x as f64;
-                        let diff = hll.raw_count() - real;
-                        let err = diff.abs() / real;
-                        assert!(err < thresh, "{}", err);
-
-                        counted += 1;
-                        total_err += err;
-                        total_diff += diff / real;
+                for seed in 1..=4 {
+                    let mut hll = $name::seeded(precision, seed);
+                    for x in 1..10_000_000 {
+                        hll.insert(&x);
+                        if x % 1_000 == 0 {
+                            let real = x as f64;
+                            let diff = hll.raw_count() - real;
+                            total_err += diff.abs() / real;
+                            total_diff += diff / real;
+                            counted += 1;
+                        }
                     }
                 }
 
-                assert!((total_err - total_diff).abs() / counted as f64 > 0.01);
+                let avg_err = total_err / counted as f64;
+                assert!(
+                    avg_err < thresh,
+                    "(p = {}) err = {}, expected {}",
+                    precision,
+                    avg_err,
+                    thresh
+                );
+
+                let bias = total_diff.abs() / counted as f64;
+                assert!(
+                    bias < thresh,
+                    "(p = {}) bias = {}, expected {}",
+                    precision,
+                    bias,
+                    thresh
+                );
             }
 
             #[test]
-            fn test_merge() {
+            fn test_union() {
                 let mut left = $name::seeded(8, 42);
                 let mut right = $name::seeded(8, 42);
 
@@ -436,7 +453,7 @@ macro_rules! impl_tests {
                     right.insert(&x);
                 }
 
-                left.merge(&right).unwrap();
+                left.union(&right).unwrap();
 
                 let real = 3000 as f64;
                 let my_acc = (real - (left.count() as f64 - real).abs()) / real;
@@ -474,6 +491,43 @@ macro_rules! impl_tests {
 
 impl_tests!(non_atomic, HyperLogLog);
 impl_tests!(atomic, AtomicHyperLogLog);
+
+#[cfg(not(feature = "loom"))]
+#[cfg(test)]
+mod atomic_parity_tests {
+    use super::*;
+
+    #[test]
+    fn count_parity() {
+        for precision in 4..=18 {
+            let mut non = HyperLogLog::seeded(precision, 42);
+            non.insert_all(0..=1000);
+            let atomic = AtomicHyperLogLog::seeded(precision, 42);
+            atomic.insert_all(0..=1000);
+            assert_eq!(non.raw_count(), atomic.raw_count());
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_parity() {
+        for precision in 4..=18 {
+            let mut non = HyperLogLog::seeded(precision, 42);
+            non.insert_all(0..=1000);
+            let atomic = AtomicHyperLogLog::seeded(precision, 42);
+            atomic.insert_all(0..=1000);
+
+            let non_bytes = serde_cbor::to_vec(&non).unwrap();
+            let atomic_bytes = serde_cbor::to_vec(&atomic).unwrap();
+            assert_eq!(non_bytes, atomic_bytes);
+
+            let non_from_atomic: HyperLogLog = serde_cbor::from_slice(&atomic_bytes).unwrap();
+            let atomic_from_non: AtomicHyperLogLog = serde_cbor::from_slice(&non_bytes).unwrap();
+            assert_eq!(non_from_atomic, non);
+            assert_eq!(atomic_from_non, atomic);
+        }
+    }
+}
 
 #[cfg(feature = "loom")]
 #[cfg(test)]

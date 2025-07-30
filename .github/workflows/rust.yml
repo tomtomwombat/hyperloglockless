@@ -20,9 +20,11 @@ jobs:
       run: cargo build --verbose
     - name: Install cargo-hack
       run: cargo install cargo-hack
-    - name: Run tests
+    - name: Tests
+      run: cargo hack build --verbose --feature-powerset --exclude-features loom
       run: cargo hack test --verbose --feature-powerset --exclude-features loom
-    - name: Run loom
+    - name: Loom
+      run: cargo hack build loom --lib --bins --tests --feature-powerset --exclude-features serde,rand,default
       run: cargo hack test loom --lib --bins --tests --feature-powerset --exclude-features serde,rand,default
   
   msrv:
@@ -37,5 +39,6 @@ jobs:
         run: cargo build --verbose
       - name: Install cargo-hack
         run: cargo install cargo-hack
-      - name: Run tests
+      - name: Tests
+        run: cargo hack build --verbose --feature-powerset --exclude-features loom
         run: cargo hack test --verbose --feature-powerset --exclude-features loom
