@@ -21,7 +21,7 @@ hyperloglockless offers a lockless concurrent HyperLogLog and a single threaded 
 
 ```toml
 [dependencies]
-hyperloglockless = "0.3.0"
+hyperloglockless = "0.3.1"
 ```
 
 A HyperLogLog with precision `p` uses `2^p` bytes of memory and has an error % of roughly `104 / sqrt(2^p)`.

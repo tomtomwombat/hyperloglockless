@@ -50,18 +50,22 @@ impl RandomDefaultHasher {
 impl Default for RandomDefaultHasher {
     #[inline]
     fn default() -> Self {
-        let mut seed = [0u8; 16];
         #[cfg(not(feature = "rand"))]
         {
-            getrandom::fill(&mut seed).expect("Unable to obtain entropy from OS/Hardware sources");
+            use foldhash::fast::RandomState;
+            let state_a = RandomState::default();
+            let state_b = RandomState::default();
+            let lo = state_a.build_hasher().finish() as u128;
+            let hi = state_b.build_hasher().finish() as u128;
+            Self::seeded(&((hi << 64) | lo).to_ne_bytes())
         }
         #[cfg(feature = "rand")]
         {
+            let mut seed = [0u8; 16];
             use rand::RngCore;
             rand::rng().fill_bytes(&mut seed);
+            Self::seeded(&seed)
         }
-
-        Self::seeded(&seed)
     }
 }
 
