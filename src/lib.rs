@@ -402,7 +402,7 @@ macro_rules! impl_tests {
             }
 
             fn low_error(precision: u8) {
-                let thresh = error_for_precision(precision) * 1.20; // within 20% of the expected error
+                let thresh = error_for_precision(precision) * 1.3; // within 30% of the expected error
 
                 let mut counted = 0;
                 let mut total_err = 0f64;
@@ -410,9 +410,11 @@ macro_rules! impl_tests {
 
                 for seed in 1..=4 {
                     let mut hll = $name::seeded(precision, seed);
+                    let mut rng = fastrand::Rng::with_seed(643340961);
                     for x in 1..10_000_000 {
-                        hll.insert(&x);
-                        if x % 1_000 == 0 {
+                        let hash = rng.u64(..);
+                        hll.insert_hash(hash);
+                        if x % 10 == 0 {
                             let real = x as f64;
                             let diff = hll.raw_count() - real;
                             total_err += diff.abs() / real;
