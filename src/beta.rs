@@ -2,6 +2,9 @@
 ///
 /// Paper: https://arxiv.org/pdf/1612.02284.pdf
 /// Wikipedia: https://en.wikipedia.org/wiki/Horner%27s_method
+///
+/// TODO: support 26 precision.
+/// TODO: consider lut
 #[inline]
 pub(crate) fn beta_horner(zeros: usize, precision: u32) -> f64 {
     if zeros == 0 {

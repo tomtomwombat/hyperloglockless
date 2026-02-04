@@ -28,6 +28,11 @@ pub use error::Error;
 mod math;
 use math::*;
 
+pub mod sparse;
+pub use sparse::{HyperLogLogPlus, SparseLogLog};
+mod buf;
+mod vint;
+
 /// HyperLogLog is a data structure for the "count-distinct problem", approximating the number of distinct elements in a multiset.
 ///
 /// # Example
