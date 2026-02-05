@@ -4,17 +4,19 @@
 [![docs.rs](https://img.shields.io/badge/docs.rs-66c2a5?style=for-the-badge&labelColor=555555&logo=docs.rs)](https://docs.rs/hyperloglockless)
 ![Downloads](https://img.shields.io/crates/d/hyperloglockless?style=for-the-badge)
 
-High-performance HyperLogLog with bias correction and full concurrency support. Used for accurate and space-efficient cardinality estimation.
+High-performance HyperLogLogs with bias correction and full concurrency support. Used for accurate and space-efficient cardinality estimation.
 
 ## Overview
 
 HyperLogLogs are space efficient data structures for the "count-distinct problem", approximating the number of distinct elements in a multiset. [Paper](https://algo.inria.fr/flajolet/Publications/FlFuGaMe07.pdf).
 
-hyperloglockless offers a lockless concurrent HyperLogLog and a single threaded counterpart. They're simpler, faster, and more accurate than other HyperLogLog implementations:
-- 🧵 **Concurrent:** `AtomicHyperLogLog` is a drop-in replacement for `RwLock<OtherHyperLogLog>`: all methods take `&self`, so you can wrap it in `Arc` and update it concurrently without `&mut`.
-- ⚡ **Fast:** Designed to be fast and simple in both single and multi-threaded scenarios.
-- 🎯 **Accurate:** Empirically verified accuracy for *trillions* of elements; other implementations break down after millions.
-- ✅ **Tested:** Rigorously tested with loom and [benchmarked](https://github.com/tomtomwombat/bench-hyperloglogs/tree/main).
+hyperloglockless includes a suite of cardinality estimator implementations based on [HyperLogLog++](https://static.googleusercontent.com/media/research.google.com/en//pubs/archive/40671.pdf) and [Log Log Beta](https://arxiv.org/abs/1612.02284). They're simpler, faster, and more accurate than other cardinality estimator implementations:
+- **O(1) Count Calls**: Internal counts are cheaply updated with each insert, making count calls up to 1000x faster than others crates.
+- **Fastest Inserts:** Inserts are faster than any other crate.
+- **Concurrency Support:** `AtomicHyperLogLog` is a drop-in replacement for `RwLock<OtherHyperLogLog>`: all methods take `&self`, so you can wrap it in `Arc` and update it concurrently without `&mut`.
+- **Sparse Representation:** `HyperLogLogPlus` uses a tweaked version of Google's [sparse representation](https://static.googleusercontent.com/media/research.google.com/en//pubs/archive/40671.pdf). It's 4x faster, 100x more accurate, and uses less memory than other crates implementing sparse representations.
+- **Accurate:** Empirically verified accuracy for *trillions* of elements; other implementations break down after millions.
+- **Tested:** Rigorously tested with loom and [benchmarked](https://github.com/tomtomwombat/bench-hyperloglogs/tree/main) for speed, memory, and accuracy.
 
 ## Usage
 
@@ -47,21 +49,32 @@ hll.insert(&'🦀');
 hll.insert_all('a'..='z');
 ```
 
-## Single-Threaded Performance vs Others
-Both `hyperloglockless::HyperLogLog` and `hyperloglockless::AtomicHyperLogLog` are extremely fast for both insert and count calls.
+## Insert Performance
+hyperloglockless is extremely fast for insert calls:
 
-![fp-micro](https://github.com/user-attachments/assets/a8ad464a-3d38-4bd5-b0c0-dd9a701484bd)
-![fp-micro](https://github.com/user-attachments/assets/487f2448-b14a-4383-86f1-b41c79c5967c)
+![fp-micro](https://github.com/user-attachments/assets/6ddb0488-427b-4b84-9151-0a33d988fd3a)
 
-## Multi-Threaded Performance vs Others
+## Count Performance
+`count` calls for hyperloglockless's cardinality estimators are O(1):
+
+![fp-micro](https://github.com/user-attachments/assets/d93fe39e-0577-438d-9308-983cf722548b)
+
+## Sparse Representation Performance
+Below measures and compares the amortized insert performance of `hyperloglockless::HyperLogLogPlus`, which first uses a sparse representation then automatically switches to classic "dense" HLL representation after a certain amount of items have been inserted. `hyperloglockless::HyperLogLogPlus` is 4x faster than other sparse implementations while using less memory. It achieves this by eliminating unnecessary hashing, using faster hash encoding, devirtualization avoidance, and smarter memory managment.
+
+![fp-micro](https://github.com/user-attachments/assets/2e95c1e7-4ffe-49c7-a2bb-5d8b23dcdf4e)
+
+![fp-micro](https://github.com/user-attachments/assets/21e8ee36-126c-488b-8222-499c8ef29f76)
+
+## Multi-Threaded Performance
 `hyperloglockless::AtomicHyperLogLog` does not require any locking and therefore avoids thread contention.
 
 ![fp-micro](https://github.com/user-attachments/assets/a0868670-d31f-4cd8-8611-5dcf0e55b5ad)
 
-## Accuracy vs Others
-hyperloglockless stays consistently accurate while other implementations break down after millions of items.
+## Accuracy
+hyperloglockless stays consistently accurate while other implementations break down after millions of items. hyperloglockless's sparse HLL is ~100 more accurate than other sparse implementations. It achieves high accuracy by cramming more information in each hash encoding and using more accurate error correction models.
 
-![fp-micro](https://github.com/user-attachments/assets/2a1042c2-20c0-4c3b-866a-8b604cb3690e)
+![fp-micro](https://github.com/user-attachments/assets/8b58e182-3684-4edb-9784-34ae5878746e)
 
 ## Available Features
 
