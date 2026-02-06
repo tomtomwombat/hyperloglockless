@@ -4,7 +4,7 @@
 
 extern crate alloc;
 use alloc::{boxed::Box, vec::Vec};
-use core::hash::{BuildHasher, Hash, Hasher};
+use core::hash::{BuildHasher, Hash};
 use core::iter::repeat;
 use core::sync::atomic::Ordering::Relaxed;
 
@@ -193,11 +193,9 @@ impl<S: BuildHasher> HyperLogLog<S> {
     }
 
     /// Inserts the item into the HyperLogLog.
-    #[inline(always)]
+    #[inline]
     pub fn insert<T: Hash + ?Sized>(&mut self, value: &T) {
-        let mut hasher = self.hasher.build_hasher();
-        value.hash(&mut hasher);
-        self.insert_hash(hasher.finish());
+        self.insert_hash(self.hasher.hash_one(value));
     }
 
     /// Inserts the hash of an item into the HyperLogLog.
@@ -211,11 +209,9 @@ impl<S: BuildHasher> HyperLogLog<S> {
     #[inline(always)]
     fn update(&mut self, new: u8, index: usize) {
         let old = self.registers[index];
-        self.registers[index] = core::cmp::max(self.registers[index], new);
-        if old == 0 {
-            self.zeros -= 1;
-        }
+        self.registers[index] = old.max(new);
         if old < new {
+            self.zeros -= (old == 0) as usize;
             let diff = harmonic_term(old) - harmonic_term(new);
             self.sum -= diff;
         }
@@ -266,9 +262,7 @@ impl<S: BuildHasher> AtomicHyperLogLog<S> {
     /// Inserts the item into the HyperLogLog.
     #[inline(always)]
     pub fn insert<T: Hash + ?Sized>(&self, value: &T) {
-        let mut hasher = self.hasher.build_hasher();
-        value.hash(&mut hasher);
-        self.insert_hash(hasher.finish());
+        self.insert_hash(self.hasher.hash_one(value));
     }
 
     /// Inserts the hash of an item into the HyperLogLog.
@@ -282,10 +276,8 @@ impl<S: BuildHasher> AtomicHyperLogLog<S> {
     #[inline(always)]
     fn update(&self, new: u8, index: usize) {
         let old = self.registers[index].fetch_max(new, Relaxed);
-        if old == 0 {
-            self.zeros.fetch_sub(1, Relaxed);
-        }
         if old < new {
+            self.zeros.fetch_sub((old == 0) as usize, Relaxed);
             let diff = harmonic_term(old) - harmonic_term(new);
             self.sum.fetch_sub(diff, Relaxed);
         }

@@ -1,4 +1,4 @@
-use core::hash::{BuildHasher, Hash, Hasher};
+use core::hash::{BuildHasher, Hash};
 extern crate alloc;
 use crate::buf::Buf;
 use crate::vint::VarInt;
@@ -163,9 +163,7 @@ impl<S: BuildHasher> SparseLogLog<S> {
 
     #[inline]
     pub fn insert<T: Hash + ?Sized>(&mut self, value: &T) {
-        let mut hasher = self.hasher.build_hasher();
-        value.hash(&mut hasher);
-        self.insert_hash(hasher.finish());
+        self.insert_hash(self.hasher.hash_one(value));
     }
 
     #[inline]
@@ -189,7 +187,7 @@ impl<S: BuildHasher> SparseLogLog<S> {
         if self.new.is_empty() {
             return;
         }
-        self.new.sort();
+        self.new.sort_unstable();
 
         // TODO: empiraclly derive the size from the precision
         let size = self.indexes.size() + (self.new.len() * 3);
@@ -297,9 +295,7 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
 
     #[inline(always)]
     pub fn insert<T: Hash + ?Sized>(&mut self, value: &T) {
-        let mut hasher = self.hasher.build_hasher();
-        value.hash(&mut hasher);
-        self.insert_hash(hasher.finish());
+        self.insert_hash(self.hasher.hash_one(value));
     }
 
     #[inline(always)]
