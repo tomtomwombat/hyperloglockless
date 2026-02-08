@@ -246,6 +246,32 @@ impl<S: BuildHasher> HyperLogLog<S> {
     pub fn raw_count(&self) -> f64 {
         self.raw_count_inner(self.zeros, self.sum)
     }
+
+    /// Low level method to expose de/serializable parts of `self`.
+    pub fn parts<'a>(&'a self) -> (&'a [u8], &'a S, usize, f64) {
+        (&self.registers, &self.hasher, self.zeros, self.sum)
+    }
+
+    /// Low level method to construct [`Self`] de/serializable parts.
+    pub fn from_parts(registers: Box<[u8]>, hasher: S, zeros: usize, sum: f64) -> Self {
+        let len = registers.len() as u64;
+        let precision = len.trailing_zeros();
+        assert_eq!(
+            precision + len.leading_zeros(),
+            63,
+            "resigers.len() not a power of 2"
+        );
+        assert_eq!(1 << precision, registers.len());
+        validate_precision(precision as u8);
+        Self {
+            hasher,
+            precision,
+            zeros,
+            correction: correction(registers.len()),
+            registers,
+            sum,
+        }
+    }
 }
 
 impl<S: BuildHasher> AtomicHyperLogLog<S> {
@@ -311,6 +337,37 @@ impl<S: BuildHasher> AtomicHyperLogLog<S> {
         let zeros = self.zeros.load(Relaxed);
         let sum = self.sum.load(Relaxed);
         self.raw_count_inner(zeros, sum)
+    }
+
+    /// Low level method to expose de/serializable parts of `self`.
+    pub fn parts<'a>(&'a self) -> (&'a [AtomicU8], &'a S, usize, f64) {
+        (
+            &self.registers,
+            &self.hasher,
+            self.zeros.load(Relaxed),
+            self.sum.load(Relaxed),
+        )
+    }
+
+    /// Low level method to construct [`Self`] de/serializable parts.
+    pub fn from_parts(registers: Box<[AtomicU8]>, hasher: S, zeros: usize, sum: f64) -> Self {
+        let len = registers.len() as u64;
+        let precision = len.trailing_zeros();
+        assert_eq!(
+            precision + len.leading_zeros(),
+            63,
+            "resigers.len() not a power of 2"
+        );
+        assert_eq!(1 << precision, registers.len());
+        validate_precision(precision as u8);
+        Self {
+            hasher,
+            precision,
+            zeros: AtomicUsize::new(zeros),
+            correction: correction(registers.len()),
+            registers,
+            sum: AtomicF64::new(sum),
+        }
     }
 }
 
@@ -504,6 +561,40 @@ macro_rules! impl_tests {
 
 impl_tests!(non_atomic, HyperLogLog);
 impl_tests!(atomic, AtomicHyperLogLog);
+
+#[cfg(test)]
+mod other_tests {
+    use super::*;
+
+    #[test]
+    fn test_parts() {
+        for precision in 4..=18 {
+            let mut before = HyperLogLog::seeded(precision, 42);
+            before.extend(1000..=2000);
+            let (x, y, z, w) = before.parts();
+
+            let after = HyperLogLog::from_parts(x.into(), y.clone(), z, w);
+            assert_eq!(before, after);
+        }
+    }
+
+    #[test]
+    fn test_parts_atomic() {
+        for precision in 4..=18 {
+            let mut before = AtomicHyperLogLog::seeded(precision, 42);
+            before.extend(1000..=2000);
+            let (x, y, z, w) = before.parts();
+
+            let f = x
+                .iter()
+                .map(|g| AtomicU8::new(g.load(Relaxed)))
+                .collect::<Vec<AtomicU8>>()
+                .into();
+            let after = AtomicHyperLogLog::from_parts(f, y.clone(), z, w);
+            assert_eq!(before, after);
+        }
+    }
+}
 
 #[cfg(not(feature = "loom"))]
 #[cfg(test)]
