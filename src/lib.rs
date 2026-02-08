@@ -253,6 +253,17 @@ impl<S: BuildHasher> HyperLogLog<S> {
     }
 
     /// Low level method to construct [`Self`] de/serializable parts.
+    ///
+    /// # Example
+    /// ```
+    /// use hyperloglockless::HyperLogLog;
+    ///
+    /// let mut before = HyperLogLog::seeded(16, 42);
+    /// before.extend(1000..=2000);
+    /// let (x, y, z, w) = before.parts();
+    /// let after = HyperLogLog::from_parts(x.into(), y.clone(), z, w);
+    /// assert_eq!(before, after);
+    /// ```
     pub fn from_parts(registers: Box<[u8]>, hasher: S, zeros: usize, sum: f64) -> Self {
         let len = registers.len() as u64;
         let precision = len.trailing_zeros();
@@ -442,7 +453,7 @@ pub(crate) fn hash_one<S: BuildHasher, T: Hash + ?Sized>(hasher: &S, value: &T) 
 }
 
 macro_rules! impl_tests {
-    ($modname:ident, $name:ident) => {
+    ($modname:ident, $name:ident, $seed:literal) => {
         #[allow(unused_mut)]
         #[cfg(not(feature = "loom"))]
         #[cfg(test)]
@@ -450,7 +461,7 @@ macro_rules! impl_tests {
             use super::*;
             #[test]
             fn test_clone() {
-                let mut hll = $name::seeded(4, 42);
+                let mut hll = $name::seeded(4, $seed);
                 hll.insert_all(1..10);
                 let mut cloned = hll.clone();
                 assert_eq!(hll, cloned);
@@ -534,7 +545,7 @@ macro_rules! impl_tests {
             #[test]
             fn test_serde() {
                 for precision in 4..=18 {
-                    let mut before = $name::seeded(precision, 42);
+                    let mut before = $name::seeded(precision, $seed);
                     before.extend(0..=1000);
 
                     let s = serde_cbor::to_vec(&before).unwrap();
@@ -559,8 +570,9 @@ macro_rules! impl_tests {
     };
 }
 
-impl_tests!(non_atomic, HyperLogLog);
-impl_tests!(atomic, AtomicHyperLogLog);
+impl_tests!(non_atomic, HyperLogLog, 42);
+impl_tests!(non_atomic_0_seed, HyperLogLog, 0);
+impl_tests!(atomic, AtomicHyperLogLog, 42);
 
 #[cfg(test)]
 mod other_tests {
@@ -572,7 +584,6 @@ mod other_tests {
             let mut before = HyperLogLog::seeded(precision, 42);
             before.extend(1000..=2000);
             let (x, y, z, w) = before.parts();
-
             let after = HyperLogLog::from_parts(x.into(), y.clone(), z, w);
             assert_eq!(before, after);
         }
@@ -584,7 +595,6 @@ mod other_tests {
             let mut before = AtomicHyperLogLog::seeded(precision, 42);
             before.extend(1000..=2000);
             let (x, y, z, w) = before.parts();
-
             let f = x
                 .iter()
                 .map(|g| AtomicU8::new(g.load(Relaxed)))
