@@ -131,8 +131,8 @@ macro_rules! impl_new {
 
             /// Returns a new [`Self`] with `1 << precision` registers (1 byte each)
             /// using the default hasher seeded with `seed`.
-            pub fn seeded(precision: u8, seed: u128) -> $name<DefaultHasher> {
-                $name::with_hasher(precision, DefaultHasher::seeded(&seed.to_be_bytes()))
+            pub fn seeded(precision: u8, seed: u64) -> $name<DefaultHasher> {
+                $name::with_hasher(precision, DefaultHasher::seeded(seed))
             }
         }
     };
@@ -452,21 +452,25 @@ macro_rules! impl_tests {
 
             #[test]
             fn test_union() {
-                let mut left = $name::seeded(8, 42);
-                let mut right = $name::seeded(8, 42);
+                for seed in 0..=10000 {
+                    let mut left = $name::seeded(8, seed);
+                    let mut right = $name::seeded(8, seed);
+                    let mut control = $name::seeded(8, seed);
 
-                for x in 1..2000 {
-                    left.insert(&x);
+                    for x in 1..2000 {
+                        left.insert(&x);
+                        control.insert(&x);
+                    }
+                    for x in 1000..3000 {
+                        right.insert(&x);
+                        control.insert(&x);
+                    }
+                    left.union(&right).unwrap();
+                    assert_eq!(left, control);
+                    let real = 3000 as f64;
+                    let my_acc = (real - (left.count() as f64 - real).abs()) / real;
+                    assert!(my_acc > 0.75, "{}", my_acc);
                 }
-                for x in 1000..3000 {
-                    right.insert(&x);
-                }
-
-                left.union(&right).unwrap();
-
-                let real = 3000 as f64;
-                let my_acc = (real - (left.count() as f64 - real).abs()) / real;
-                assert!(my_acc > 0.75, "{}", my_acc);
             }
 
             #[cfg(feature = "serde")]
