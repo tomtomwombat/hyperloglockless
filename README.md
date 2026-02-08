@@ -12,7 +12,6 @@ HyperLogLogs are space efficient data structures for the "count-distinct problem
 
 hyperloglockless includes a suite of cardinality estimator implementations based on [HyperLogLog++](https://static.googleusercontent.com/media/research.google.com/en//pubs/archive/40671.pdf) and [Log Log Beta](https://arxiv.org/abs/1612.02284). They're simpler, faster, and more accurate than other cardinality estimator implementations:
 - **O(1) Count Calls**: Internal counts are cheaply updated with each insert, hyperloglockless particularly useful for streaming use-cases.
-- **Fastest Inserts:** Inserts are faster than any other crate.
 - **Concurrency Support:** `AtomicHyperLogLog` is a drop-in replacement for `RwLock<OtherHyperLogLog>`: all methods take `&self`, so you can wrap it in `Arc` and update it concurrently without `&mut`.
 - **Sparse Representation:** `HyperLogLogPlus` uses a tweaked version of Google's [sparse representation](https://static.googleusercontent.com/media/research.google.com/en//pubs/archive/40671.pdf). It's 5x faster, 100x more accurate, and uses less memory than other crates implementing sparse representations.
 - **Accurate:** Empirically verified accuracy for *trillions* of elements; other implementations break down after millions.
@@ -49,6 +48,12 @@ hll.insert(&'🦀');
 hll.insert_all('a'..='z');
 ```
 
+## Performance
+
+A overall benchmark where N items are insertted and a single count call is made afterwards.
+
+![fp-micro](https://github.com/user-attachments/assets/cf322021-b01e-48c4-a2d1-4eace214c3e4)
+
 ## Insert Performance
 hyperloglockless is extremely fast for insert calls:
 
@@ -59,10 +64,8 @@ hyperloglockless is extremely fast for insert calls:
 
 ![fp-micro](https://github.com/user-attachments/assets/a4b3b6a3-1bd5-405c-a289-b8c139cae3a1)
 
-## Sparse Representation Performance
+## Sparse Representation Memory (HyperLogLogPlus)
 Below measures and compares the amortized insert performance of `hyperloglockless::HyperLogLogPlus`, which first uses a sparse representation then automatically switches to classic "dense" HLL representation after a certain number of inserts. `hyperloglockless::HyperLogLogPlus` is 5x faster than other sparse implementations while using less memory. It achieves this by eliminating unnecessary hashing, using faster hash encoding, devirtualization avoidance, and smarter memory managment.
-
-![fp-micro](https://github.com/user-attachments/assets/14cb3440-3f18-4dd2-b6a3-38eab485a1d3)
 
 ![fp-micro](https://github.com/user-attachments/assets/72c236d9-6983-4034-ba9e-671ee715014a)
 
