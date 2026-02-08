@@ -118,21 +118,15 @@ impl Iterator for DiffIter {
     }
 }
 
-pub struct SparseLogLog<S = DefaultHasher> {
-    /// Data from new is batch merged into data when it fills up enough
+struct SparseLogLog {
+    /// Small temporary collection of the latset encoded hashes (u32).
+    /// It's batch merged into data when it fills up enough.
     new: Vec<u32>,
     indexes: DiffVec,
     precision: u8,
-    hasher: S,
 }
 
 impl SparseLogLog {
-    pub fn new(precision: u8) -> Self {
-        Self::with_hasher(precision, DefaultHasher::default())
-    }
-}
-
-impl<S: BuildHasher> SparseLogLog<S> {
     /// Fraction (1 / X) of dense memory (1 << precision bytes) before flushing `new` into sparse.
     /// I.e. we flush X many times before converting to dense representation.
     /// Just before the flush, we theoretically use dense_mem / X + sparse_mem.
@@ -140,12 +134,11 @@ impl<S: BuildHasher> SparseLogLog<S> {
     /// Note we flush anytime count is called regardless of X.
     const NEW_SIZE_FACTOR: usize = 25;
 
-    pub fn with_hasher(precision: u8, hasher: S) -> Self {
+    pub fn new(precision: u8) -> Self {
         Self {
             new: Vec::new(),
             indexes: Default::default(),
             precision,
-            hasher,
         }
     }
 
@@ -159,11 +152,6 @@ impl<S: BuildHasher> SparseLogLog<S> {
         let dense_hll_size = self.hll_size_bytes() << 2;
         let new_size = self.new.len();
         new_size * Self::NEW_SIZE_FACTOR > dense_hll_size
-    }
-
-    #[inline]
-    pub fn insert<T: Hash + ?Sized>(&mut self, value: &T) {
-        self.insert_hash(crate::hash_one(&self.hasher, value));
     }
 
     #[inline]
@@ -237,12 +225,11 @@ impl<S: BuildHasher> SparseLogLog<S> {
     }
 }
 
-impl<S: BuildHasher> From<SparseLogLog<S>> for HyperLogLog<S> {
-    fn from(mut sparse: SparseLogLog<S>) -> Self {
+impl From<SparseLogLog> for HyperLogLog {
+    fn from(mut sparse: SparseLogLog) -> Self {
         sparse.flush();
-        let hasher = sparse.hasher;
         let registers = sparse.indexes.into_iter();
-        let mut hll = HyperLogLog::with_hasher(sparse.precision, hasher);
+        let mut hll = HyperLogLog::new(sparse.precision);
         for encoded in registers {
             let (rank, register) = decode_hash(encoded, sparse.precision);
             hll.update(rank as u8, register);
@@ -251,6 +238,14 @@ impl<S: BuildHasher> From<SparseLogLog<S>> for HyperLogLog<S> {
     }
 }
 
+/// An implementation of the the HyperLogLog++ data structure.
+///
+/// For small cardinalities, a "sparse" representation is used. The sparse representation is more accurate and uses less memory,
+/// but has slower insert speed.
+/// The error and memory usage of the sparse representation scale roughly linearly with the number of items inserted. When
+/// the memory of the sparse representation equals the memory of the dense representation, it switches to dense internally.
+/// This happens inside the `insert`/`insert_hash` call (which is why they need `&mut self`). The error of the sparse representation
+/// never exceeds that of the dense.
 pub struct HyperLogLogPlus<S = DefaultHasher> {
     sparse: Option<SparseLogLog>,
     dense: Option<HyperLogLog>,
@@ -259,12 +254,28 @@ pub struct HyperLogLogPlus<S = DefaultHasher> {
 }
 
 impl HyperLogLogPlus {
+    /// Returns a new [`Self`] using the default hasher with a random seed.
+    /// [`Self`] is initialized to use the compact and dynamically sized sparse representation,
+    /// but later switches to the dense representation when it uses equal memory
+    /// (`1 << precision` registers (1 byte each)).
     pub fn new(precision: u8) -> Self {
         Self::with_hasher(precision, DefaultHasher::default())
+    }
+
+    /// Returns a new [`Self`] using the default hasher seeded with `seed`.
+    /// [`Self`] is initialized to use the compact and dynamically sized sparse representation,
+    /// but later switches to the dense representation when it uses equal memory
+    /// (`1 << precision` registers (1 byte each)).
+    pub fn seeded(precision: u8, seed: u128) -> Self {
+        Self::with_hasher(precision, DefaultHasher::seeded(&seed.to_be_bytes()))
     }
 }
 
 impl<S: BuildHasher> HyperLogLogPlus<S> {
+    /// Returns a new [`Self`] using the provided hasher.
+    /// [`Self`] is initialized to use the compact and dynamically sized sparse representation,
+    /// but later switches to the dense representation when it uses equal memory
+    /// (`1 << precision` registers (1 byte each)).
     pub fn with_hasher(precision: u8, hasher: S) -> Self {
         crate::validate_precision(precision);
         Self {
@@ -285,6 +296,8 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
         this.dense.as_mut().unwrap().insert_hash(h);
     }
 
+    /// Inserts the hash of an item into the HyperLogLogPlus.
+    /// `self` switches to dense mode if sparse mode exceeds memory usage of dense mode.
     #[inline(always)]
     pub fn insert_hash(&mut self, hash: u64) {
         if self.full() {
@@ -293,6 +306,8 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
         (self.insert_fn)(self, hash);
     }
 
+    /// Inserts the item into the HyperLogLogPlus.
+    /// `self` switches to dense mode if sparse mode exceeds memory usage of dense mode.
     #[inline(always)]
     pub fn insert<T: Hash + ?Sized>(&mut self, value: &T) {
         self.insert_hash(self.hasher.hash_one(value));
@@ -313,11 +328,13 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
         self.insert_fn = Self::insert_dense;
     }
 
+    /// Returns the approximate number of elements in `self`.
     #[inline]
     pub fn count(&mut self) -> usize {
         self.raw_count() as usize
     }
 
+    /// Returns the approximate number of elements in `self`.
     #[inline]
     pub fn raw_count(&mut self) -> f64 {
         match self.sparse.as_mut() {
@@ -326,9 +343,25 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
         }
     }
 
+    /// Returns `true` if the current internal representation is sparse,
+    /// `false` if using classic dense (HyperLogLog) representation.
     pub fn is_sparse(&self) -> bool {
         self.sparse.is_some()
     }
+
+    /*
+    /// Returns the expected error for this `HyperLogLogPlus`.
+    /// Expected error is lower in sparse mode.
+    pub fn expected_error(&mut self) -> f64 {
+        match self.sparse.as_mut() {
+            Some(s) => {
+                s.flush();
+                expected_error(s.indexes.len())
+            }
+            _ => crate::error_for_precision(self.dense.as_ref().unwrap().precision as u8),
+        }
+    }
+    */
 }
 
 #[cfg(test)]
@@ -374,11 +407,35 @@ mod sparse_tests {
     fn insert_repeat() {
         let mut sll = SparseLogLog::new(16);
         let num = 1000;
+        let randnum = fastrand::u64(..);
         for _ in 0..num {
-            sll.insert(&1);
+            sll.insert_hash(randnum);
         }
         assert_eq!(sll.count().round() as usize, 1);
     }
+
+    /*
+    #[test]
+    fn test_error() {
+        let mut sll = SparseLogLog::new(16);
+        let mut rng = fastrand::Rng::with_seed(643340961);
+        let mut true_size = 0;
+        while !sll.full() {
+            let hash = rng.u64(..);
+            sll.insert_hash(hash);
+            true_size += 1;
+
+            if true_size & 0b111111 == 0 {
+                let real = true_size as f64;
+                let est = sll.count();
+                let diff = est - real;
+                let err = diff.abs() / real;
+
+                let expected = expected_error(sll.indexes.len());
+            }
+        }
+    }
+    */
 }
 
 #[cfg(test)]

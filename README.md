@@ -10,7 +10,7 @@ High-performance HyperLogLogs with bias correction and full concurrency support.
 
 HyperLogLogs are space efficient data structures for the "count-distinct problem", approximating the number of distinct elements in a multiset. [Paper](https://algo.inria.fr/flajolet/Publications/FlFuGaMe07.pdf).
 
-hyperloglockless includes a suite of cardinality estimator implementations based on [HyperLogLog++](https://static.googleusercontent.com/media/research.google.com/en//pubs/archive/40671.pdf) and [Log Log Beta](https://arxiv.org/abs/1612.02284). They're simpler, faster, and more accurate than other cardinality estimator implementations:
+hyperloglockless includes a suite of cardinality estimator implementations based on [HyperLogLog++](https://static.googleusercontent.com/media/research.google.com/en//pubs/archive/40671.pdf) and [Log Log Beta](https://arxiv.org/abs/1612.02284). hyperloglockless has O(1) cardinality queries without sacrificing insert throughput. hyperloglockless is simple and predictable in both performance and accuracy.
 - **O(1) Count Calls**: Internal counts are cheaply updated with each insert, hyperloglockless particularly useful for streaming use-cases.
 - **Concurrency Support:** `AtomicHyperLogLog` is a drop-in replacement for `RwLock<OtherHyperLogLog>`: all methods take `&self`, so you can wrap it in `Arc` and update it concurrently without `&mut`.
 - **Sparse Representation:** `HyperLogLogPlus` uses a tweaked version of Google's [sparse representation](https://static.googleusercontent.com/media/research.google.com/en//pubs/archive/40671.pdf). It's 5x faster, 100x more accurate, and uses less memory than other crates implementing sparse representations.
@@ -50,7 +50,7 @@ hll.insert_all('a'..='z');
 
 ## Performance
 
-An overall benchmark where N items are inserted and a single count call is made afterwards:
+An overall benchmark where N items are inserted and a single count call is made afterwards. hyperloglockless has O(1) cardinality queries without sacrificing insert throughput. It excels when there are many cardinality queries and/or when the inserts are <65K. For larger inserts, it keeps up well since internal book-keeping are quick.
 
 ![fp-micro](https://github.com/user-attachments/assets/3ea6d311-6986-4796-84f9-d90524c52c63)
 
