@@ -29,7 +29,7 @@ mod math;
 use math::*;
 
 pub mod sparse;
-pub use sparse::{HyperLogLogPlus, SparseLogLog};
+pub use sparse::HyperLogLogPlus;
 mod buf;
 mod vint;
 
@@ -211,7 +211,7 @@ impl<S: BuildHasher> HyperLogLog<S> {
         let old = self.registers[index];
         self.registers[index] = new.max(old);
         self.zeros -= (old == 0) as usize;
-        let diff = HARMONIC_TERM[old as usize] - HARMONIC_TERM[new as usize];
+        let diff = INV_POW2[old as usize] - INV_POW2[new as usize];
         self.sum -= diff.max(0.0);
     }
 
@@ -274,7 +274,7 @@ impl<S: BuildHasher> AtomicHyperLogLog<S> {
         let old = self.registers[index].fetch_max(new, Relaxed);
         if old < new {
             self.zeros.fetch_sub((old == 0) as usize, Relaxed);
-            let diff = HARMONIC_TERM[old as usize] - HARMONIC_TERM[new as usize];
+            let diff = INV_POW2[old as usize] - INV_POW2[new as usize];
             self.sum.fetch_sub(diff, Relaxed);
         }
     }
@@ -335,9 +335,9 @@ fn validate_precision(precision: u8) {
     );
 }
 
-static HARMONIC_TERM: [f64; 66] = compute_harmonic_lut();
+static INV_POW2: [f64; 66] = compute_inv_pow2_lut();
 
-const fn compute_harmonic_lut() -> [f64; 66] {
+const fn compute_inv_pow2_lut() -> [f64; 66] {
     let mut arr = [0.0; 66];
     let mut i = 0;
     while i <= 65 {
@@ -377,7 +377,7 @@ fn correction(count: usize) -> f64 {
 }
 
 #[inline(always)]
-fn hash_one<S: BuildHasher, T: Hash + ?Sized>(hasher: &S, value: &T) -> u64 {
+pub(crate) fn hash_one<S: BuildHasher, T: Hash + ?Sized>(hasher: &S, value: &T) -> u64 {
     use core::hash::Hasher;
     let mut h = hasher.build_hasher();
     value.hash(&mut h);

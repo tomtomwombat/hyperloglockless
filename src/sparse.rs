@@ -163,7 +163,7 @@ impl<S: BuildHasher> SparseLogLog<S> {
 
     #[inline]
     pub fn insert<T: Hash + ?Sized>(&mut self, value: &T) {
-        self.insert_hash(self.hasher.hash_one(value));
+        self.insert_hash(crate::hash_one(&self.hasher, value));
     }
 
     #[inline]

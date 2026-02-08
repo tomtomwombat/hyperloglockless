@@ -50,12 +50,12 @@ hll.insert_all('a'..='z');
 
 ## Performance
 
-An overall benchmark where N items are insertted and a single count call is made afterwards:
+An overall benchmark where N items are inserted and a single count call is made afterwards:
 
 ![fp-micro](https://github.com/user-attachments/assets/3ea6d311-6986-4796-84f9-d90524c52c63)
 
 ## Accuracy
-hyperloglockless stays consistently accurate while other implementations break down after millions of items. hyperloglockless's sparse HLL is ~100 more accurate than other sparse implementations. It achieves high accuracy by cramming more information into each hash encoding and using more accurate error correction models.
+hyperloglockless stays consistently accurate while other implementations break down after millions of items. hyperloglockless's sparse HLL is ~100x more accurate than other sparse implementations. It achieves high accuracy by cramming more information into each hash encoding and using more accurate error correction models.
 
 ![fp-micro](https://github.com/user-attachments/assets/8b58e182-3684-4edb-9784-34ae5878746e)
 
