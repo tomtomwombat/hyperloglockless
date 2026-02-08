@@ -29,7 +29,7 @@ impl Buf {
     fn resize(&mut self) {
         assert!(self.max_len > self.buf.len());
         let new_cap = core::cmp::min(1 + (3 * self.buf.len()) >> 1, self.max_len);
-        self.buf.resize(new_cap, 0);
+        self.buf.resize(new_cap + 8, 0);
     }
 
     #[inline]

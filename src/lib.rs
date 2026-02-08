@@ -90,13 +90,13 @@ impl<S: BuildHasher> HyperLogLog<S> {
     pub fn with_hasher(precision: u8, hasher: S) -> Self {
         validate_precision(precision);
         let num_registers = 1 << precision;
-        let data: Vec<_> = repeat(0).take(num_registers).collect();
+        let registers: Vec<_> = repeat(0).take(num_registers).collect();
         Self {
             hasher,
             precision: precision as u32,
-            zeros: data.len(),
-            correction: correction(data.len()),
-            registers: data.into(),
+            zeros: registers.len(),
+            correction: correction(registers.len()),
+            registers: registers.into(),
             sum: f64::from(num_registers as u32),
         }
     }
@@ -195,7 +195,7 @@ impl<S: BuildHasher> HyperLogLog<S> {
     /// Inserts the item into the HyperLogLog.
     #[inline]
     pub fn insert<T: Hash + ?Sized>(&mut self, value: &T) {
-        self.insert_hash(self.hasher.hash_one(value));
+        self.insert_hash(hash_one(&self.hasher, value));
     }
 
     /// Inserts the hash of an item into the HyperLogLog.
@@ -209,12 +209,10 @@ impl<S: BuildHasher> HyperLogLog<S> {
     #[inline(always)]
     fn update(&mut self, new: u8, index: usize) {
         let old = self.registers[index];
-        self.registers[index] = old.max(new);
-        if old < new {
-            self.zeros -= (old == 0) as usize;
-            let diff = harmonic_term(old) - harmonic_term(new);
-            self.sum -= diff;
-        }
+        self.registers[index] = new.max(old);
+        self.zeros -= (old == 0) as usize;
+        let diff = HARMONIC_TERM[old as usize] - HARMONIC_TERM[new as usize];
+        self.sum -= diff.max(0.0);
     }
 
     /// Inserts all the items in `iter` into the `self`.
@@ -246,9 +244,7 @@ impl<S: BuildHasher> HyperLogLog<S> {
     /// Returns the approximate number of elements in `self`.
     #[inline]
     pub fn raw_count(&self) -> f64 {
-        let zeros = self.zeros;
-        let sum = self.sum;
-        self.raw_count_inner(zeros, sum)
+        self.raw_count_inner(self.zeros, self.sum)
     }
 }
 
@@ -262,7 +258,7 @@ impl<S: BuildHasher> AtomicHyperLogLog<S> {
     /// Inserts the item into the HyperLogLog.
     #[inline(always)]
     pub fn insert<T: Hash + ?Sized>(&self, value: &T) {
-        self.insert_hash(self.hasher.hash_one(value));
+        self.insert_hash(hash_one(&self.hasher, value));
     }
 
     /// Inserts the hash of an item into the HyperLogLog.
@@ -278,7 +274,7 @@ impl<S: BuildHasher> AtomicHyperLogLog<S> {
         let old = self.registers[index].fetch_max(new, Relaxed);
         if old < new {
             self.zeros.fetch_sub((old == 0) as usize, Relaxed);
-            let diff = harmonic_term(old) - harmonic_term(new);
+            let diff = HARMONIC_TERM[old as usize] - HARMONIC_TERM[new as usize];
             self.sum.fetch_sub(diff, Relaxed);
         }
     }
@@ -339,10 +335,16 @@ fn validate_precision(precision: u8) {
     );
 }
 
-/// Returns `1.0 / ((1 << x) as f64)`.
-#[inline(always)]
-fn harmonic_term(x: u8) -> f64 {
-    f64::from_bits(u64::MAX.wrapping_sub(u64::from(x)) << 54 >> 2)
+static HARMONIC_TERM: [f64; 66] = compute_harmonic_lut();
+
+const fn compute_harmonic_lut() -> [f64; 66] {
+    let mut arr = [0.0; 66];
+    let mut i = 0;
+    while i <= 65 {
+        arr[i] = 1.0 / ((1u128 << i) as f64);
+        i += 1;
+    }
+    arr
 }
 
 /// Returns the HyperLogLog precision that will have the error for calls to `count` and `raw_count`.
@@ -371,6 +373,21 @@ fn correction(count: usize) -> f64 {
         32 => 0.697,
         64 => 0.709,
         _ => base / (1.0 + approx / count as f64),
+    }
+}
+
+#[inline(always)]
+fn hash_one<S: BuildHasher, T: Hash + ?Sized>(hasher: &S, value: &T) -> u64 {
+    #[cfg(feature = "std")]
+    {
+        hasher.hash_one(value)
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        use core::hash::Hasher;
+        let mut h = hasher.build_hasher();
+        value.hash(&mut h);
+        h.finish()
     }
 }
 
