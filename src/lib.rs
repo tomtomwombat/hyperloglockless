@@ -378,17 +378,10 @@ fn correction(count: usize) -> f64 {
 
 #[inline(always)]
 fn hash_one<S: BuildHasher, T: Hash + ?Sized>(hasher: &S, value: &T) -> u64 {
-    #[cfg(feature = "std")]
-    {
-        hasher.hash_one(value)
-    }
-    #[cfg(not(feature = "std"))]
-    {
-        use core::hash::Hasher;
-        let mut h = hasher.build_hasher();
-        value.hash(&mut h);
-        h.finish()
-    }
+    use core::hash::Hasher;
+    let mut h = hasher.build_hasher();
+    value.hash(&mut h);
+    h.finish()
 }
 
 macro_rules! impl_tests {
