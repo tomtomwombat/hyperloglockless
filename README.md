@@ -50,19 +50,20 @@ hll.insert_all('a'..='z');
 
 ## Performance
 
-A overall benchmark where N items are insertted and a single count call is made afterwards.
+An overall benchmark where N items are insertted and a single count call is made afterwards:
 
-![fp-micro](https://github.com/user-attachments/assets/cf322021-b01e-48c4-a2d1-4eace214c3e4)
+![fp-micro](https://github.com/user-attachments/assets/3ea6d311-6986-4796-84f9-d90524c52c63)
 
-## Insert Performance
-hyperloglockless is extremely fast for insert calls:
+## Accuracy
+hyperloglockless stays consistently accurate while other implementations break down after millions of items. hyperloglockless's sparse HLL is ~100 more accurate than other sparse implementations. It achieves high accuracy by cramming more information into each hash encoding and using more accurate error correction models.
 
-![fp-micro](https://github.com/user-attachments/assets/cce97150-c21c-48ea-82e6-eec04dd323ff)
+![fp-micro](https://github.com/user-attachments/assets/8b58e182-3684-4edb-9784-34ae5878746e)
 
 ## Count Performance
 `count` calls for hyperloglockless's cardinality estimators are O(1):
 
 ![fp-micro](https://github.com/user-attachments/assets/a4b3b6a3-1bd5-405c-a289-b8c139cae3a1)
+
 
 ## Sparse Representation Memory (HyperLogLogPlus)
 Below measures and compares the amortized insert performance of `hyperloglockless::HyperLogLogPlus`, which first uses a sparse representation then automatically switches to classic "dense" HLL representation after a certain number of inserts. `hyperloglockless::HyperLogLogPlus` is 5x faster than other sparse implementations while using less memory. It achieves this by eliminating unnecessary hashing, using faster hash encoding, devirtualization avoidance, and smarter memory managment.
@@ -73,11 +74,6 @@ Below measures and compares the amortized insert performance of `hyperloglockles
 `hyperloglockless::AtomicHyperLogLog` does not require any locking and therefore avoids thread contention.
 
 ![fp-micro](https://github.com/user-attachments/assets/a0868670-d31f-4cd8-8611-5dcf0e55b5ad)
-
-## Accuracy
-hyperloglockless stays consistently accurate while other implementations break down after millions of items. hyperloglockless's sparse HLL is ~100 more accurate than other sparse implementations. It achieves high accuracy by cramming more information into each hash encoding and using more accurate error correction models.
-
-![fp-micro](https://github.com/user-attachments/assets/8b58e182-3684-4edb-9784-34ae5878746e)
 
 ## Available Features
 
