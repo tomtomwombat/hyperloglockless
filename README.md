@@ -10,8 +10,8 @@ High-performance HyperLogLogs with bias correction and full concurrency support.
 
 HyperLogLogs are space efficient data structures for the "count-distinct problem", approximating the number of distinct elements in a multiset. [Paper](https://algo.inria.fr/flajolet/Publications/FlFuGaMe07.pdf).
 
-hyperloglockless includes a suite of cardinality estimator implementations based on [HyperLogLog++](https://static.googleusercontent.com/media/research.google.com/en//pubs/archive/40671.pdf) and [Log Log Beta](https://arxiv.org/abs/1612.02284). hyperloglockless has O(1) cardinality queries without sacrificing insert throughput. hyperloglockless is simple and predictable in both performance and accuracy.
-- **O(1) Count Calls**: Internal counts are cheaply updated with each insert, hyperloglockless particularly useful for streaming use-cases.
+hyperloglockless includes a suite of cardinality estimator implementations based on [HyperLogLog++](https://static.googleusercontent.com/media/research.google.com/en//pubs/archive/40671.pdf) and [Log Log Beta](https://arxiv.org/abs/1612.02284). Notable features are:
+- **O(1) Count Calls** without sacrificing insert throughput. Internal counts are cheaply updated with each insert, hyperloglockless particularly useful for streaming use-cases.
 - **Concurrency Support:** `AtomicHyperLogLog` is a drop-in replacement for `RwLock<OtherHyperLogLog>`: all methods take `&self`, so you can wrap it in `Arc` and update it concurrently without `&mut`.
 - **Sparse Representation:** `HyperLogLogPlus` uses a tweaked version of Google's [sparse representation](https://static.googleusercontent.com/media/research.google.com/en//pubs/archive/40671.pdf). It's 5x faster, 100x more accurate, and uses less memory than other crates implementing sparse representations.
 - **Accurate:** Empirically verified accuracy for *trillions* of elements; other implementations break down after millions.
@@ -21,7 +21,7 @@ hyperloglockless includes a suite of cardinality estimator implementations based
 
 ```toml
 [dependencies]
-hyperloglockless = "0.3.1"
+hyperloglockless = "0.4.0"
 ```
 
 A HyperLogLog with precision `p` uses `2^p` bytes of memory and has an error % of roughly `104 / sqrt(2^p)`.
@@ -39,6 +39,14 @@ let count = hll.count(); // ~27
 assert_eq!(hll.len(), 1 << precision); // 16384 bytes
 ```
 
+Use any hasher:
+```rust
+use hyperloglockless::HyperLogLog;
+use foldhash::fast::RandomState;
+
+let hll = HyperLogLog::with_hasher(14, RandomState::default());
+```
+
 Full concurrency support: `AtomicHyperLogLog` is a drop-in replacement for `RwLock<OtherHyperLogLog>`: all methods take `&self`.
 ```rust
 use hyperloglockless::AtomicHyperLogLog;
@@ -48,9 +56,18 @@ hll.insert(&'🦀');
 hll.insert_all('a'..='z');
 ```
 
+A more compact and accurate "sparse" representation that switches to classic HLL automatically when memory reaches the same as classic HLL:
+```rust
+use hyperloglockless::HyperLogLogPlus;
+
+let mut hll = HyperLogLogPlus::new(14);
+hll.insert(&'🦀');
+hll.insert_all('a'..='z');
+```
+
 ## Performance
 
-An overall benchmark where N items are inserted and a single count call is made afterwards. hyperloglockless has O(1) cardinality queries without sacrificing insert throughput. It excels when there are many cardinality queries and/or when the inserts are <65K. For larger inserts, it keeps up well since internal book-keeping are quick.
+An overall benchmark where N items are inserted and a single count call is made afterwards. hyperloglockless has O(1) cardinality queries without sacrificing insert throughput. It excels when there are many cardinality queries and/or when the inserts are <65K. For larger inserts, it keeps up well since internal book-keeping is quick.
 
 ![fp-micro](https://github.com/user-attachments/assets/3ea6d311-6986-4796-84f9-d90524c52c63)
 

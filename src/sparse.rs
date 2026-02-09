@@ -317,6 +317,14 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
         self.insert_hash(crate::hash_one(&self.hasher, value));
     }
 
+    /// Inserts all the items in `iter` into the `self`.
+    #[inline]
+    pub fn insert_all<T: Hash, I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        for val in iter {
+            self.insert(&val);
+        }
+    }
+
     #[inline(always)]
     fn full(&self) -> bool {
         match self.sparse.as_ref() {
