@@ -19,9 +19,9 @@ jobs:
     - name: Install cargo-hack
       run: cargo install cargo-hack
     - name: Build
-      run: cargo hack build --verbose --feature-powerset --exclude-features loom
+      run: cargo hack build --verbose --release --feature-powerset --exclude-features loom
     - name: Tests
-      run: cargo hack test --verbose --feature-powerset --exclude-features loom
+      run: cargo hack test --verbose --release --feature-powerset --exclude-features loom
     - name: Loom build
       run: cargo hack build --lib --bins --tests --feature-powerset --exclude-features serde,rand,default
     - name: Loom tests
@@ -38,6 +38,6 @@ jobs:
       - name: Install cargo-hack
         run: cargo install cargo-hack --version 0.6.37 --force --locked
       - name: Build
-        run: cargo hack build --verbose --feature-powerset --exclude-features loom
+        run: cargo hack build --verbose --release --feature-powerset --exclude-features loom
       - name: Tests
-        run: cargo hack test --verbose --feature-powerset --exclude-features loom
+        run: cargo hack test --verbose --release --feature-powerset --exclude-features loom
