@@ -46,7 +46,8 @@ fn correction(num: usize) -> f64 {
     buckets as f64 * crate::math::ln(buckets as f64 / zeros as f64)
 }
 
-#[derive(Default, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Default, Debug, PartialEq, Eq)]
 struct DiffVec {
     encoded: Buf,
     last: u32,
@@ -118,6 +119,8 @@ impl Iterator for DiffIter {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct SparseLogLog {
     /// Small temporary collection of the latset encoded hashes (u32).
     /// It's batch merged into data when it fills up enough.
@@ -238,14 +241,15 @@ impl From<SparseLogLog> for HyperLogLog {
     }
 }
 
-/// An implementation of the the HyperLogLog++ data structure.
+/// An implementation of the the [HyperLogLog++](https://static.googleusercontent.com/media/research.google.com/en//pubs/archive/40671.pdf) data structure.
 ///
 /// For small cardinalities, a "sparse" representation is used. The sparse representation is more accurate and uses less memory,
 /// but has slower insert speed.
-/// The error and memory usage of the sparse representation scale roughly linearly with the number of items inserted. When
-/// the memory of the sparse representation equals the memory of the dense representation, it switches to dense internally.
-/// This happens inside the `insert`/`insert_hash` call (which is why they need `&mut self`). The error of the sparse representation
+/// The error and memory usage of the sparse representation scales roughly linearly with the number of items inserted. When
+/// the memory of the sparse representation equals the memory of the dense representation, it switches to dense automatically.
+/// This happens inside the `insert`/`insert_hash` call (which is why it needs `&mut self`). The error of the sparse representation
 /// never exceeds that of the dense.
+#[derive(Debug)]
 pub struct HyperLogLogPlus<S = DefaultHasher> {
     sparse: Option<SparseLogLog>,
     dense: Option<HyperLogLog>,
@@ -265,9 +269,9 @@ impl HyperLogLogPlus {
     /// Returns a new [`Self`] using the default hasher seeded with `seed`.
     /// [`Self`] is initialized to use the compact and dynamically sized sparse representation,
     /// but later switches to the dense representation when it uses equal memory
-    /// (`1 << precision` registers (1 byte each)).
-    pub fn seeded(precision: u8, seed: u64) -> Self {
-        Self::with_hasher(precision, DefaultHasher::seeded(seed))
+    /// (`1 << precision` registers, 1 byte each).
+    pub fn seeded(precision: u8, seed: u128) -> Self {
+        Self::with_hasher(precision, DefaultHasher::seeded(&seed.to_be_bytes()))
     }
 }
 
@@ -275,7 +279,7 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
     /// Returns a new [`Self`] using the provided hasher.
     /// [`Self`] is initialized to use the compact and dynamically sized sparse representation,
     /// but later switches to the dense representation when it uses equal memory
-    /// (`1 << precision` registers (1 byte each)).
+    /// (`1 << precision` registers, 1 byte each).
     pub fn with_hasher(precision: u8, hasher: S) -> Self {
         crate::validate_precision(precision);
         Self {
@@ -348,20 +352,82 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
     pub fn is_sparse(&self) -> bool {
         self.sparse.is_some()
     }
+}
 
-    /*
-    /// Returns the expected error for this `HyperLogLogPlus`.
-    /// Expected error is lower in sparse mode.
-    pub fn expected_error(&mut self) -> f64 {
-        match self.sparse.as_mut() {
-            Some(s) => {
-                s.flush();
-                expected_error(s.indexes.len())
-            }
-            _ => crate::error_for_precision(self.dense.as_ref().unwrap().precision as u8),
+impl<S: BuildHasher> PartialEq for HyperLogLogPlus<S> {
+    fn eq(&self, other: &Self) -> bool {
+        self.sparse == other.sparse && self.dense == other.dense
+    }
+}
+impl<S: BuildHasher> Eq for HyperLogLogPlus<S> {}
+
+impl<T: Hash, S: BuildHasher> Extend<T> for HyperLogLogPlus<S> {
+    #[inline]
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        for x in iter.into_iter() {
+            self.insert(&x);
         }
     }
-    */
+}
+
+#[cfg(feature = "serde")]
+mod serde_impl {
+    use super::*;
+    use serde::ser::SerializeStruct;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    impl<S: BuildHasher> Serialize for HyperLogLogPlus<S>
+    where
+        S: Serialize,
+        SparseLogLog: Serialize,
+        HyperLogLog: Serialize,
+    {
+        fn serialize<Ser>(&self, serializer: Ser) -> Result<Ser::Ok, Ser::Error>
+        where
+            Ser: Serializer,
+        {
+            let mut st = serializer.serialize_struct("HyperLogLogPlus", 3)?;
+            st.serialize_field("sparse", &self.sparse)?;
+            st.serialize_field("dense", &self.dense)?;
+            st.serialize_field("hasher", &self.hasher)?;
+            st.end()
+        }
+    }
+
+    impl<'de, S: BuildHasher> Deserialize<'de> for HyperLogLogPlus<S>
+    where
+        S: Deserialize<'de>,
+        SparseLogLog: Deserialize<'de>,
+        HyperLogLog: Deserialize<'de>,
+    {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            #[derive(Deserialize)]
+            struct Helper<S> {
+                sparse: Option<SparseLogLog>,
+                dense: Option<HyperLogLog>,
+                hasher: S,
+            }
+
+            let helper = Helper::deserialize(deserializer)?;
+
+            assert!(helper.sparse.is_some() ^ helper.dense.is_some());
+            let insert_fn = if helper.dense.is_some() {
+                Self::insert_dense
+            } else {
+                Self::insert_sparse
+            };
+            let hll = HyperLogLogPlus {
+                sparse: helper.sparse,
+                dense: helper.dense,
+                hasher: helper.hasher,
+                insert_fn,
+            };
+            Ok(hll)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -413,29 +479,6 @@ mod sparse_tests {
         }
         assert_eq!(sll.count().round() as usize, 1);
     }
-
-    /*
-    #[test]
-    fn test_error() {
-        let mut sll = SparseLogLog::new(16);
-        let mut rng = fastrand::Rng::with_seed(643340961);
-        let mut true_size = 0;
-        while !sll.full() {
-            let hash = rng.u64(..);
-            sll.insert_hash(hash);
-            true_size += 1;
-
-            if true_size & 0b111111 == 0 {
-                let real = true_size as f64;
-                let est = sll.count();
-                let diff = est - real;
-                let err = diff.abs() / real;
-
-                let expected = expected_error(sll.indexes.len());
-            }
-        }
-    }
-    */
 }
 
 #[cfg(test)]
@@ -453,6 +496,25 @@ mod var_int_tests {
 
         for (i, x) in vals.into_iter().enumerate() {
             assert_eq!(x, vals[i]);
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_serde_sparse() {
+        for seed in 0..=42 {
+            for precision in 4..=18 {
+                let mut before = HyperLogLogPlus::seeded(precision, seed);
+                before.extend(0..=1000);
+
+                let s = serde_cbor::to_vec(&before).unwrap();
+                let mut after: HyperLogLogPlus = serde_cbor::from_slice(&s).unwrap();
+                assert_eq!(before, after);
+
+                before.extend(1000..=2000);
+                after.extend(1000..=2000);
+                assert_eq!(before, after);
+            }
         }
     }
 }

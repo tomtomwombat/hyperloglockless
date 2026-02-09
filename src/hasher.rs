@@ -1,100 +1,160 @@
-use core::fmt;
-use core::hash::BuildHasher;
-use rapidhash::quality::{RapidHasher, SeedableState};
+use core::hash::{BuildHasher, Hasher};
+use siphasher::sip::SipHasher13;
 
-const DEFAULT_SECRET: [u64; 7] = [
-    0x243F6A8885A308D3,
-    0x13198A2E03707344,
-    0xA4093822299F31D0,
-    0x082EFA98EC4E6C89,
-    0x452821E638D01377,
-    0xBE5466CF34E90C6C,
-    0xC0AC29B7C97C50DD,
-];
-
-#[derive(Clone, Eq, PartialEq)]
-pub struct DefaultHasher {
-    seed: u64,
-    state: SeedableState<'static>,
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CloneBuildHasher<H: Hasher + Clone> {
+    hasher: H,
 }
 
+impl<H: Hasher + Clone> CloneBuildHasher<H> {
+    #[allow(dead_code)]
+    fn new(hasher: H) -> Self {
+        Self { hasher }
+    }
+}
+
+impl<H: Hasher + Clone> BuildHasher for CloneBuildHasher<H> {
+    type Hasher = H;
+    #[inline]
+    fn build_hasher(&self) -> Self::Hasher {
+        self.hasher.clone()
+    }
+}
+
+/// The default hasher for [`crate::HyperLogLog`] and [`crate::AtomicHyperLogLog`].
+///
+/// `DefaultHasher` has a faster `build_hasher` than `std::collections::hash_map::RandomState` or `SipHasher13`.
+/// This is important because `build_hasher` is called once for every actual hash.
+pub type DefaultHasher = CloneBuildHasher<RandomDefaultHasher>;
+
 impl DefaultHasher {
-    pub fn seeded(seed: u64) -> Self {
+    pub fn seeded(seed: &[u8; 16]) -> Self {
         Self {
-            seed,
-            state: SeedableState::custom(seed, &DEFAULT_SECRET),
+            hasher: RandomDefaultHasher::seeded(seed),
         }
     }
 }
 
-impl BuildHasher for DefaultHasher {
-    type Hasher = RapidHasher<'static>;
-    #[inline(always)]
-    fn build_hasher(&self) -> Self::Hasher {
-        self.state.build_hasher()
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct RandomDefaultHasher(SipHasher13);
+
+impl RandomDefaultHasher {
+    #[inline]
+    pub fn seeded(seed: &[u8; 16]) -> Self {
+        Self(SipHasher13::new_with_key(seed))
     }
 }
 
-impl fmt::Debug for DefaultHasher {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("DefaultHasher")
-            .field("seed", &self.seed)
-            .finish()
-    }
-}
-
-impl Default for DefaultHasher {
+impl Default for RandomDefaultHasher {
     #[inline]
     fn default() -> Self {
         #[cfg(not(feature = "rand"))]
         {
-            use core::hash::Hasher;
             use foldhash::fast::RandomState;
-            Self::seeded(RandomState::default().build_hasher().finish())
+            let state_a = RandomState::default();
+            let state_b = RandomState::default();
+            let lo = state_a.build_hasher().finish() as u128;
+            let hi = state_b.build_hasher().finish() as u128;
+            Self::seeded(&((hi << 64) | lo).to_ne_bytes())
         }
         #[cfg(feature = "rand")]
         {
-            use rand::Rng;
-            Self::seeded(rand::rng().random::<u64>())
+            let mut seed = [0u8; 16];
+            use rand::RngCore;
+            rand::rng().fill_bytes(&mut seed);
+            Self::seeded(&seed)
         }
     }
 }
 
-#[cfg(feature = "serde")]
-mod serde_impl {
-    use super::DefaultHasher;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    impl Serialize for DefaultHasher {
-        fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-            serializer.serialize_u64(self.seed)
-        }
+impl Hasher for RandomDefaultHasher {
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0.finish()
     }
-
-    impl<'de> Deserialize<'de> for DefaultHasher {
-        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-            let seed = u64::deserialize(deserializer)?;
-            Ok(DefaultHasher::seeded(seed))
-        }
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        self.0.write(bytes)
+    }
+    #[inline]
+    fn write_u8(&mut self, i: u8) {
+        self.0.write_u8(i)
+    }
+    #[inline]
+    fn write_u16(&mut self, i: u16) {
+        self.0.write_u16(i)
+    }
+    #[inline]
+    fn write_u32(&mut self, i: u32) {
+        self.0.write_u32(i)
+    }
+    #[inline]
+    fn write_u64(&mut self, i: u64) {
+        self.0.write_u64(i)
+    }
+    #[inline]
+    fn write_u128(&mut self, i: u128) {
+        self.0.write_u128(i)
+    }
+    #[inline]
+    fn write_usize(&mut self, i: usize) {
+        self.0.write_usize(i)
+    }
+    #[inline]
+    fn write_i8(&mut self, i: i8) {
+        self.0.write_i8(i)
+    }
+    #[inline]
+    fn write_i16(&mut self, i: i16) {
+        self.0.write_i16(i)
+    }
+    #[inline]
+    fn write_i32(&mut self, i: i32) {
+        self.0.write_i32(i)
+    }
+    #[inline]
+    fn write_i64(&mut self, i: i64) {
+        self.0.write_i64(i)
+    }
+    #[inline]
+    fn write_i128(&mut self, i: i128) {
+        self.0.write_i128(i)
+    }
+    #[inline]
+    fn write_isize(&mut self, i: isize) {
+        self.0.write_isize(i)
     }
 }
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use crate::hasher::RandomDefaultHasher;
     use core::hash::Hasher;
+    use siphasher::sip::SipHasher13;
+
+    fn hash_all(mut x: impl Hasher) -> u64 {
+        x.write(&[1; 16]);
+        x.write_u8(1);
+        x.write_u16(1);
+        x.write_u32(1);
+        x.write_u64(1);
+        x.write_u128(1);
+        x.write_usize(1);
+        x.write_i8(1);
+        x.write_i16(1);
+        x.write_i32(1);
+        x.write_i64(1);
+        x.write_i128(1);
+        x.write_isize(1);
+        x.finish()
+    }
 
     #[test]
-    fn test_equality() {
-        let seed = 42;
-        let left = DefaultHasher::seeded(seed);
-        let right = DefaultHasher::seeded(seed);
-        assert_eq!(left, right);
-        assert_eq!(left.clone(), right);
-        assert_eq!(left, DefaultHasher::seeded(seed));
-        assert!(left != DefaultHasher::seeded(420));
-        let mut x = left.build_hasher();
-        x.write_u64(7);
-        assert_eq!(left, DefaultHasher::seeded(seed));
+    fn test_hasher() {
+        let h1 = RandomDefaultHasher::seeded(&[0; 16]);
+        let h2 = SipHasher13::new_with_key(&[0; 16]);
+        assert_eq!(hash_all(h1), hash_all(h2),);
     }
 }
