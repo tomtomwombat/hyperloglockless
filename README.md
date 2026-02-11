@@ -21,7 +21,7 @@ hyperloglockless includes a suite of cardinality estimator implementations based
 
 ```toml
 [dependencies]
-hyperloglockless = "0.4.0"
+hyperloglockless = "0.5.0"
 ```
 
 A HyperLogLog with precision `p` uses `2^p` bytes of memory and has an error % of roughly `104 / sqrt(2^p)`.
@@ -83,7 +83,7 @@ hyperloglockless stays consistently accurate while other implementations break d
 
 
 ## Sparse Representation Memory (HyperLogLogPlus)
-Below measures and compares the amortized insert performance of `hyperloglockless::HyperLogLogPlus`, which first uses a sparse representation then automatically switches to classic "dense" HLL representation after a certain number of inserts. `hyperloglockless::HyperLogLogPlus` is 5x faster than other sparse implementations while using less memory. It achieves this by eliminating unnecessary hashing, using faster hash encoding, devirtualization avoidance, and smarter memory managment.
+Below measures and compares the amortized insert performance of `hyperloglockless::HyperLogLogPlus`, which first uses a sparse representation then automatically switches to classic "dense" HLL representation after a certain number of inserts. `hyperloglockless::HyperLogLogPlus` is 5x faster than other sparse implementations while using less memory. It achieves this by eliminating unnecessary hashing, using faster hash encoding, devirtualization avoidance, and smarter memory management.
 
 ![fp-micro](https://github.com/user-attachments/assets/72c236d9-6983-4034-ba9e-671ee715014a)
 

@@ -210,7 +210,7 @@ impl<S: BuildHasher> HyperLogLog<S> {
     fn update(&mut self, new: u8, index: usize) {
         let old = self.registers[index];
         self.registers[index] = new.max(old);
-        self.zeros -= (old == 0) as usize;
+        self.zeros -= (old == 0 && new > 0) as usize;
         let diff = INV_POW2[old as usize] - INV_POW2[new as usize];
         self.sum -= diff.max(0.0);
     }
@@ -226,7 +226,9 @@ impl<S: BuildHasher> HyperLogLog<S> {
     /// Merges another HyperLogLog into `self`, updating the count.
     /// Returns `Err(Error::IncompatibleLength)` if the two HyperLogLogs have
     /// different length ([`Self::len`]).
-    #[inline(always)]
+    ///
+    /// This does not verify that the HLLs use the same hasher or seed.
+    /// If they are different then `self` will be "corrupted".
     pub fn union(&mut self, other: &Self) -> Result<(), Error> {
         if self.len() != other.len() {
             return Err(Error::IncompatibleLength);
@@ -580,25 +582,23 @@ macro_rules! impl_tests {
             #[test]
             fn test_union() {
                 for p in 4..=18 {
-                    for seed in 0..=10000 {
-                        let mut left = $name::seeded(p, seed);
-                        let mut right = $name::seeded(p, seed);
-                        let mut control = $name::seeded(p, seed);
+                    for seed in 0..=100 {
+                        let ranges = [(0, 0), (0, 1), (0, 50), (0, 2000), (0, 10000), (100, 1000)];
+                        for (li, lj) in ranges.clone() {
+                            for (ri, rj) in ranges.clone() {
+                                let mut left = $name::seeded(p, seed);
+                                let mut right = $name::seeded(p, seed);
+                                let mut control = $name::seeded(p, seed);
 
-                        for x in 1..2000 {
-                            left.insert(&x);
-                            control.insert(&x);
-                        }
-                        for x in 1000..3000 {
-                            right.insert(&x);
-                            control.insert(&x);
-                        }
-                        left.union(&right).unwrap();
-                        if p > 12 {
-                            assert!(
-                                (left.raw_count() - 3000.0).abs()
-                                    <= (left.raw_count() - 2000.0).abs()
-                            );
+                                left.insert_all(li..lj);
+                                right.insert_all(ri..rj);
+                                control.insert_all(li..lj);
+                                control.insert_all(ri..rj);
+
+                                left.union(&right).unwrap();
+                                assert_eq!(left.raw_count(), control.raw_count());
+                                assert_eq!(left, control);
+                            }
                         }
                     }
                 }

@@ -1,6 +1,7 @@
 use core::hash::{BuildHasher, Hash};
 extern crate alloc;
 use crate::buf::Buf;
+use crate::error::Error;
 use crate::vint::VarInt;
 use crate::DefaultHasher;
 use crate::HyperLogLog;
@@ -85,26 +86,26 @@ impl DiffVec {
     }
 }
 
-impl IntoIterator for DiffVec {
+impl<'a> IntoIterator for &'a DiffVec {
     type Item = u32;
-    type IntoIter = DiffIter;
+    type IntoIter = DiffIter<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
         DiffIter {
             index: 0,
             last: 0,
-            inner: self,
+            inner: &self,
         }
     }
 }
 
-pub struct DiffIter {
+pub struct DiffIter<'a> {
     index: usize,
     last: u32,
-    inner: DiffVec,
+    inner: &'a DiffVec,
 }
 
-impl Iterator for DiffIter {
+impl<'a> Iterator for DiffIter<'a> {
     type Item = u32;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -116,6 +117,12 @@ impl Iterator for DiffIter {
             self.last += dif;
             Some(self.last)
         }
+    }
+}
+
+impl ExactSizeIterator for DiffIter<'_> {
+    fn len(&self) -> usize {
+        self.inner.size() - self.index
     }
 }
 
@@ -174,46 +181,61 @@ impl SparseLogLog {
     }
 
     #[inline]
-    pub(crate) fn flush(&mut self) {
-        if self.new.is_empty() {
-            return;
-        }
-        self.new.sort_unstable();
-
+    pub(crate) fn flush_inner(&mut self, mut other: impl ExactSizeIterator<Item = u32>) {
         // TODO: empiraclly derive the size from the precision
-        let size = self.indexes.size() + (self.new.len() * 3);
-        let max_size = self.indexes.size() + (self.new.len() * 5) + 8;
+        let size = self.indexes.size() + (other.len() * 3);
+        let max_size = self.indexes.size() + (other.len() * 5) + 8;
         let mut buf = DiffVec::with_size(size, max_size);
-        let y = core::mem::take(&mut self.indexes);
-        let v = core::mem::take(&mut self.new);
-        let (mut new, mut diffvec) = (v.into_iter(), y.into_iter());
-        let (mut new_hash, mut old_hash) = (new.next(), diffvec.next());
-
+        let binding = core::mem::take(&mut self.indexes);
+        let mut this = binding.into_iter();
+        let (mut new_hash, mut old_hash) = (other.next(), this.next());
         while new_hash.is_some() && old_hash.is_some() {
             let new_hash_ = new_hash.unwrap();
             let old_hash_ = old_hash.unwrap();
             if new_hash_ == old_hash_ {
                 buf.push(new_hash_);
-                new_hash = new.next();
-                old_hash = diffvec.next();
+                new_hash = other.next();
+                old_hash = this.next();
             } else if new_hash_ > old_hash_ {
                 buf.push(old_hash_);
-                old_hash = diffvec.next();
+                old_hash = this.next();
             } else {
                 buf.push(new_hash_);
-                new_hash = new.next();
+                new_hash = other.next();
             }
         }
         while let Some(h) = new_hash {
             buf.push(h);
-            new_hash = new.next();
+            new_hash = other.next();
         }
         while let Some(h) = old_hash {
             buf.push(h);
-            old_hash = diffvec.next();
+            old_hash = this.next();
         }
         self.indexes = buf;
         self.indexes.encoded.shrink_to_fit();
+    }
+
+    #[inline]
+    pub(crate) fn flush(&mut self) {
+        if self.new.is_empty() {
+            return;
+        }
+        self.new.sort_unstable();
+        let new = core::mem::take(&mut self.new);
+        self.flush_inner(new.into_iter());
+    }
+
+    #[inline]
+    pub(crate) fn union(&mut self, other: &Self) -> Result<(), Error> {
+        if self.precision != other.precision {
+            return Err(Error::IncompatibleLength);
+        }
+        let mut other_new = other.new.clone();
+        other_new.sort_unstable();
+        self.flush_inner(other_new.into_iter());
+        self.flush_inner(other.indexes.into_iter());
+        Ok(())
     }
 
     #[inline]
@@ -359,6 +381,63 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
     pub fn is_sparse(&self) -> bool {
         self.sparse.is_some()
     }
+
+    /// Returns the precision of `self`.
+    pub fn precision(&self) -> u8 {
+        match self.sparse.as_ref() {
+            Some(s) => s.precision,
+            _ => self.dense.as_ref().unwrap().precision as u8,
+        }
+    }
+
+    /// Merges another HyperLogLog into `self`, updating the count.
+    /// Returns `Err(Error::IncompatibleLength)` if the two HyperLogLogs have
+    /// different precision ([`Self::precision`]).
+    ///
+    /// This does not verify that the HLLs use equal hashers or seeds.
+    /// If they are different then `self` will be "corrupted".
+    pub fn union(&mut self, other: &Self) -> Result<(), Error> {
+        if self.precision() != other.precision() {
+            return Err(Error::IncompatibleLength);
+        }
+        match (self.is_sparse(), other.is_sparse()) {
+            (true, true) => self
+                .sparse
+                .as_mut()
+                .unwrap()
+                .union(other.sparse.as_ref().unwrap()),
+            (false, false) => self
+                .dense
+                .as_mut()
+                .unwrap()
+                .union(other.dense.as_ref().unwrap()),
+            (true, false) => {
+                println!("swapping");
+                self.swap();
+                println!("{:?}", self.dense.as_ref().unwrap().zeros);
+                let r = self
+                    .dense
+                    .as_mut()
+                    .unwrap()
+                    .union(other.dense.as_ref().unwrap());
+                println!("{:?}", self.dense.as_ref().unwrap().zeros);
+                r
+            }
+            (false, true) => {
+                let sparse = other.sparse.as_ref().unwrap();
+                let dense = self.dense.as_mut().unwrap();
+                for encoded in sparse.new.iter() {
+                    let (rank, register) = decode_hash(*encoded, sparse.precision);
+                    dense.update(rank as u8, register);
+                }
+                for encoded in sparse.indexes.into_iter() {
+                    let (rank, register) = decode_hash(encoded, sparse.precision);
+                    dense.update(rank as u8, register);
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 impl<S: BuildHasher> PartialEq for HyperLogLogPlus<S> {
@@ -397,23 +476,24 @@ mod sparse_tests {
 
     #[test]
     fn test_conversion() {
-        let hasher = foldhash::fast::RandomState::default();
-        let mut sll = HyperLogLogPlus::with_hasher(12, hasher.clone());
-        let mut hll = HyperLogLog::with_hasher(12, hasher);
-        let num = 10000;
-        for x in 0..num {
-            sll.insert(&x);
-            hll.insert(&x);
+        for seed in 0..=10 {
+            let mut sll = HyperLogLogPlus::seeded(12, seed);
+            let mut hll = HyperLogLog::seeded(12, seed);
+            let num = 10000;
+            for x in 0..num {
+                sll.insert(&x);
+                hll.insert(&x);
+            }
+            let before = sll.count();
+            for x in 0..num {
+                sll.insert(&x);
+            }
+            let after = sll.count();
+            assert_eq!(before, after);
+            assert_eq!(after, hll.count());
+            assert!(!sll.is_sparse());
+            assert_eq!(hll, sll.dense.unwrap());
         }
-        let before = sll.count();
-        for x in 0..num {
-            sll.insert(&x);
-        }
-        let after = sll.count();
-        let hll = hll.count();
-        assert_eq!(before, after);
-        assert_eq!(after, hll);
-        assert!(!sll.is_sparse());
     }
 
     #[test]
@@ -425,6 +505,34 @@ mod sparse_tests {
             sll.insert_hash(randnum);
         }
         assert_eq!(sll.count().round() as usize, 1);
+    }
+
+    #[test]
+    fn test_union() {
+        for seed in 0..=100 {
+            let ranges = [(0, 0), (0, 1), (0, 50), (0, 2000), (0, 10000), (100, 1000)];
+            for (li, lj) in ranges.clone() {
+                for (ri, rj) in ranges.clone() {
+                    let mut left = HyperLogLogPlus::seeded(12, seed);
+                    left.insert_all(li..lj);
+                    let mut right = HyperLogLogPlus::seeded(12, seed);
+                    right.insert_all(ri..rj);
+                    let mut control = HyperLogLogPlus::seeded(12, seed);
+                    control.insert_all(li..lj);
+                    control.insert_all(ri..rj);
+
+                    left.union(&right).unwrap();
+                    assert_eq!(
+                        left.count(),
+                        control.count(),
+                        "Left: {:?}, Right: {:?}",
+                        (li, lj),
+                        (ri, rj)
+                    );
+                    assert_eq!(left, control);
+                }
+            }
+        }
     }
 }
 

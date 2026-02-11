@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use core::iter::repeat;
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Default, Debug, Clone, PartialEq, Eq)]
+#[derive(Default, Debug, Clone)]
 pub struct Buf {
     buf: Vec<u8>,
     len: usize,
@@ -55,3 +55,13 @@ impl Buf {
         self.buf.shrink_to_fit();
     }
 }
+
+impl PartialEq for Buf {
+    fn eq(&self, other: &Self) -> bool {
+        if self.len() != other.len() {
+            return false;
+        }
+        self.buf == self.buf
+    }
+}
+impl Eq for Buf {}
