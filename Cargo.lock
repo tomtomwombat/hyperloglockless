@@ -80,7 +80,7 @@ checksum = "1b43ede17f21864e81be2fa654110bf1e793774238d86ef8555c37e6519c0403"
 
 [[package]]
 name = "hyperloglockless"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "fastrand",
  "foldhash",

@@ -413,8 +413,7 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
                 .union(other.dense.as_ref().unwrap()),
             (true, false) => {
                 self.swap();
-                self
-                    .dense
+                self.dense
                     .as_mut()
                     .unwrap()
                     .union(other.dense.as_ref().unwrap())
