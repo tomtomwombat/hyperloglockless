@@ -412,16 +412,12 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
                 .unwrap()
                 .union(other.dense.as_ref().unwrap()),
             (true, false) => {
-                println!("swapping");
                 self.swap();
-                println!("{:?}", self.dense.as_ref().unwrap().zeros);
-                let r = self
+                self
                     .dense
                     .as_mut()
                     .unwrap()
-                    .union(other.dense.as_ref().unwrap());
-                println!("{:?}", self.dense.as_ref().unwrap().zeros);
-                r
+                    .union(other.dense.as_ref().unwrap())
             }
             (false, true) => {
                 let sparse = other.sparse.as_ref().unwrap();
