@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use core::iter::repeat;
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Default, Debug, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct Buf {
     buf: Vec<u8>,
     len: usize,

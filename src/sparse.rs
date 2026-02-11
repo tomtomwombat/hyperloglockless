@@ -47,7 +47,7 @@ fn correction(num: usize) -> f64 {
 }
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Default, Debug, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
 struct DiffVec {
     encoded: Buf,
     last: u32,
@@ -119,7 +119,7 @@ impl Iterator for DiffIter {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct SparseLogLog {
     /// Small temporary collection of the latset encoded hashes (u32).
@@ -249,12 +249,12 @@ impl From<SparseLogLog> for HyperLogLog {
 /// the memory of the sparse representation equals the memory of the dense representation, it switches to dense automatically.
 /// This happens inside the `insert`/`insert_hash` call (which is why it needs `&mut self`). The error of the sparse representation
 /// never exceeds that of the dense.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HyperLogLogPlus<S = DefaultHasher> {
     sparse: Option<SparseLogLog>,
     dense: Option<HyperLogLog>,
     hasher: S,
-    insert_fn: fn(&mut Self, hash: u64),
 }
 
 impl HyperLogLogPlus {
@@ -286,13 +286,15 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
             sparse: Some(SparseLogLog::new(precision)),
             dense: None,
             hasher,
-            insert_fn: Self::insert_sparse,
         }
     }
 
     #[inline(always)]
     fn insert_sparse(this: &mut Self, h: u64) {
         this.sparse.as_mut().unwrap().insert_hash(h);
+        if this.full() {
+            this.swap();
+        }
     }
 
     #[inline(always)]
@@ -302,17 +304,14 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
 
     /// Inserts the hash of an item into the HyperLogLogPlus.
     /// `self` switches to dense mode if sparse mode exceeds memory usage of dense mode.
-    #[inline(always)]
+    #[inline]
     pub fn insert_hash(&mut self, hash: u64) {
-        if self.full() {
-            self.swap();
-        }
-        (self.insert_fn)(self, hash);
+        [Self::insert_dense, Self::insert_sparse][self.is_sparse() as usize](self, hash);
     }
 
     /// Inserts the item into the HyperLogLogPlus.
     /// `self` switches to dense mode if sparse mode exceeds memory usage of dense mode.
-    #[inline(always)]
+    #[inline]
     pub fn insert<T: Hash + ?Sized>(&mut self, value: &T) {
         self.insert_hash(crate::hash_one(&self.hasher, value));
     }
@@ -337,7 +336,6 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
     fn swap(&mut self) {
         let s = self.sparse.take().unwrap();
         self.dense = Some(s.into());
-        self.insert_fn = Self::insert_dense;
     }
 
     /// Returns the approximate number of elements in `self`.
@@ -357,6 +355,7 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
 
     /// Returns `true` if the current internal representation is sparse,
     /// `false` if using classic dense (HyperLogLog) representation.
+    #[inline]
     pub fn is_sparse(&self) -> bool {
         self.sparse.is_some()
     }
@@ -374,66 +373,6 @@ impl<T: Hash, S: BuildHasher> Extend<T> for HyperLogLogPlus<S> {
     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
         for x in iter.into_iter() {
             self.insert(&x);
-        }
-    }
-}
-
-#[cfg(feature = "serde")]
-mod serde_impl {
-    use super::*;
-    use serde::ser::SerializeStruct;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    impl<S: BuildHasher> Serialize for HyperLogLogPlus<S>
-    where
-        S: Serialize,
-        SparseLogLog: Serialize,
-        HyperLogLog: Serialize,
-    {
-        fn serialize<Ser>(&self, serializer: Ser) -> Result<Ser::Ok, Ser::Error>
-        where
-            Ser: Serializer,
-        {
-            let mut st = serializer.serialize_struct("HyperLogLogPlus", 3)?;
-            st.serialize_field("sparse", &self.sparse)?;
-            st.serialize_field("dense", &self.dense)?;
-            st.serialize_field("hasher", &self.hasher)?;
-            st.end()
-        }
-    }
-
-    impl<'de, S: BuildHasher> Deserialize<'de> for HyperLogLogPlus<S>
-    where
-        S: Deserialize<'de>,
-        SparseLogLog: Deserialize<'de>,
-        HyperLogLog: Deserialize<'de>,
-    {
-        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where
-            D: Deserializer<'de>,
-        {
-            #[derive(Deserialize)]
-            struct Helper<S> {
-                sparse: Option<SparseLogLog>,
-                dense: Option<HyperLogLog>,
-                hasher: S,
-            }
-
-            let helper = Helper::deserialize(deserializer)?;
-
-            assert!(helper.sparse.is_some() ^ helper.dense.is_some());
-            let insert_fn = if helper.dense.is_some() {
-                Self::insert_dense
-            } else {
-                Self::insert_sparse
-            };
-            let hll = HyperLogLogPlus {
-                sparse: helper.sparse,
-                dense: helper.dense,
-                hasher: helper.hasher,
-                insert_fn,
-            };
-            Ok(hll)
         }
     }
 }
