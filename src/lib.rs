@@ -9,10 +9,10 @@ use core::iter::repeat;
 use core::sync::atomic::Ordering::Relaxed;
 
 #[cfg(feature = "loom")]
-pub(crate) use loom::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize};
+pub(crate) use loom::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize};
 
 #[cfg(not(feature = "loom"))]
-pub(crate) use core::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize};
+pub(crate) use core::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize};
 
 #[cfg(all(feature = "loom", feature = "serde"))]
 compile_error!("features `loom` and `serde` are mutually exclusive");
@@ -56,6 +56,7 @@ pub struct HyperLogLog<S = DefaultHasher> {
     zeros: usize,
     sum: f64,
     correction: f64,
+    updated_count: bool,
 }
 
 /// HyperLogLog is a data structure for the "count-distinct problem", approximating the number of distinct elements in a multiset.
@@ -82,6 +83,7 @@ pub struct AtomicHyperLogLog<S = DefaultHasher> {
     zeros: AtomicUsize,
     sum: AtomicF64,
     correction: f64,
+    updated_count: AtomicBool,
 }
 
 impl<S: BuildHasher> HyperLogLog<S> {
@@ -98,6 +100,7 @@ impl<S: BuildHasher> HyperLogLog<S> {
             correction: correction(registers.len()),
             registers: registers.into(),
             sum: f64::from(num_registers as u32),
+            updated_count: true,
         }
     }
 }
@@ -116,12 +119,13 @@ impl<S: BuildHasher> AtomicHyperLogLog<S> {
             correction: correction(data.len()),
             registers: data.into(),
             sum: AtomicF64::new(f64::from(num_registers as u32)),
+            updated_count: true.into(),
         }
     }
 }
 
-macro_rules! impl_new {
-    ($name:ident) => {
+macro_rules! impl_hll {
+    ($name:ident, $ismut:literal, $($m:ident)?) => {
         impl $name {
             /// Returns a new [`Self`] with `1 << precision` registers (1 byte each)
             /// using the default hasher with a random seed.
@@ -135,14 +139,7 @@ macro_rules! impl_new {
                 $name::with_hasher(precision, DefaultHasher::seeded(&seed.to_be_bytes()))
             }
         }
-    };
-}
 
-impl_new!(HyperLogLog);
-impl_new!(AtomicHyperLogLog);
-
-macro_rules! impl_common {
-    ($name:ident) => {
         impl<S: BuildHasher> $name<S> {
             /// Returns the number registers in `self`.
             #[inline(always)]
@@ -153,7 +150,7 @@ macro_rules! impl_common {
             /// Returns the approximate number of elements in `self`.
             #[inline]
             pub fn count(&self) -> usize {
-                self.raw_count() as usize
+                crate::math::round(self.raw_count()) as usize
             }
 
             #[inline(always)]
@@ -161,13 +158,127 @@ macro_rules! impl_common {
                 let d = sum + beta_horner(zeros, self.precision);
                 self.correction * (self.len() * (self.len() - zeros)) as f64 / d
             }
-        }
 
-        impl<T: Hash, S: BuildHasher> Extend<T> for $name<S> {
-            #[inline]
-            fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
-                self.insert_all(iter)
+            fn count_from_scratch(&self) -> f64 {
+                let mut data = [0usize; 66];
+                for r in self.iter() {
+                    data[r as usize] += 1;
+                }
+                let zeros = data[0] as usize;
+                let mut sum = zeros as f64;
+                for i in 1..=65 {
+                    sum += data[i] as f64 * INV_POW2[i];
+                }
+                self.raw_count_inner(zeros, sum)
             }
+
+            /// Inserts the item into the HyperLogLog.
+            #[inline]
+            pub fn insert<T: Hash + ?Sized>(&$($m)? self, value: &T) {
+                self.insert_inner::<true>(hash_one(&self.hasher, value));
+            }
+
+            /// Inserts the hash of an item into the HyperLogLog.
+            #[inline(always)]
+            pub fn insert_hash(&$($m)? self, hash: u64) {
+                self.insert_inner::<true>(hash);
+            }
+
+            /// Inserts the item into the HyperLogLog, but skips maintaining the cached count.
+            ///
+            /// The registers are still updated exactly as in [`Self::insert`], but the
+            /// internal count state is invalidated. As a result, the next call to
+            /// [`Self::count`] or [`Self::raw_count`] will recompute the count by scanning
+            /// all registers.
+            ///
+            /// This is faster for insert-heavy workloads where counts are queried rarely.
+            /// The rough work for each operation:
+            /// - `insert`: 2
+            /// - `count`: 1
+            /// - `insert_lazy`: 1
+            /// - `count` (post `insert_lazy`): 2^precision (the number of registers)
+            ///
+            /// # Example
+            /// ```
+            #[doc = concat!("use hyperloglockless::", stringify!($name), ";")]
+            ///
+            #[doc = concat!("let ", $ismut, "hll = ", stringify!($name), "::new(12);")]
+            ///
+            /// hll.insert(&1);
+            /// let _ = hll.count(); // O(1)
+            /// hll.insert_lazy(&42);
+            /// let _ = hll.count(); // scans all registers
+            /// ```
+            #[inline]
+            pub fn insert_lazy<T: Hash + ?Sized>(&$($m)? self, value: &T) {
+                self.insert_inner::<false>(hash_one(&self.hasher, value));
+            }
+
+            /// Inserts the hash of an item into the HyperLogLog without updating the count.
+            /// See [`Self::insert_lazy`].
+            #[inline(always)]
+            pub fn insert_hash_lazy(&$($m)? self, hash: u64) {
+                self.insert_inner::<false>(hash);
+            }
+
+            /// Inserts all the items in `iter` into the `self`.
+            #[inline]
+            pub fn insert_all<'a, T: Hash + 'a, I: Iterator<Item = &'a T>>(&$($m)? self, iter: I) {
+                for val in iter {
+                    self.insert(val);
+                }
+            }
+
+            /// Inserts all the items in `iter` into the `self`.
+            /// See [`Self::insert_lazy`].
+            #[inline]
+            pub fn insert_all_lazy<'a, T: Hash + 'a, I: Iterator<Item = &'a T>>(&$($m)? self, iter: I) {
+                for val in iter {
+                    self.insert_lazy(val);
+                }
+            }
+
+            /// Counts the current items in `self` plus the items in `iter` and returns the count.
+            /// This is optimized based on the size hint of `iter`: if `iter` is very long, each insert
+            /// does not update the count in O(1). Instead it will cheaply insert items and then scan
+            /// and all the registers at once at then end.
+            #[inline]
+            pub fn count_once<'a, T: Hash + 'a, I: Iterator<Item = &'a T>>(&$($m)? self, iter: I) -> f64 {
+                let len = iter.size_hint().0;
+                let thresh = self.len();
+                match len {
+                    l if l > thresh => {
+                        self.insert_all_lazy(iter);
+                    }
+                    _ => {
+                        self.insert_all(iter);
+                    }
+                }
+                self.raw_count()
+            }
+
+            /// Merges another HyperLogLog into `self`, updating the count.
+            /// Returns `Err(Error::IncompatibleLength)` if the two HyperLogLogs have
+            /// different length ([`Self::len`]).
+            ///
+            /// This does not verify that the HLLs use the same hasher or seed.
+            /// If they are different then `self` will be "corrupted".
+            pub fn union(&$($m)? self, other: &Self) -> Result<(), Error> {
+                if self.len() != other.len() {
+                    return Err(Error::IncompatibleLength);
+                }
+
+                // TODO? if self.hasher != other.hasher { ... }
+
+                if self.updated_count() {
+                    other.iter().enumerate().for_each(|(i, x)| self.update::<true>(x, i));
+                } else {
+                    other.iter().enumerate().for_each(|(i, x)| self.update::<false>(x, i));
+                }
+
+                Ok(())
+            }
+
         }
 
         impl<S: BuildHasher> PartialEq for $name<S> {
@@ -182,76 +293,59 @@ macro_rules! impl_common {
     };
 }
 
-impl_common!(HyperLogLog);
-impl_common!(AtomicHyperLogLog);
+impl_hll!(HyperLogLog, "mut ", mut);
+impl_hll!(AtomicHyperLogLog, "",);
 
 impl<S: BuildHasher> HyperLogLog<S> {
+    #[inline(always)]
+    fn insert_inner<const UPDATE_COUNT: bool>(&mut self, hash: u64) {
+        let index = (hash >> (64 - self.precision)) as usize;
+        let new = 1 + hash.trailing_zeros() as u8;
+        self.update::<UPDATE_COUNT>(new, index);
+    }
+
+    #[inline(always)]
+    fn update<const UPDATE_COUNT: bool>(&mut self, new: u8, index: usize) {
+        let old = self.registers[index];
+        self.registers[index] = new.max(old);
+        if UPDATE_COUNT && self.updated_count {
+            self.zeros -= (old == 0 && new > 0) as usize;
+            let diff = INV_POW2[old as usize] - INV_POW2[new as usize];
+            self.sum -= diff.max(0.0);
+        } else {
+            self.updated_count = false;
+        }
+    }
+
     /// Returns an iterator over the value of each register.
     #[inline]
     pub fn iter(&self) -> impl Iterator<Item = u8> + '_ {
         self.registers.iter().map(|x| *x)
     }
 
-    /// Inserts the item into the HyperLogLog.
     #[inline]
-    pub fn insert<T: Hash + ?Sized>(&mut self, value: &T) {
-        self.insert_hash(hash_one(&self.hasher, value));
-    }
-
-    /// Inserts the hash of an item into the HyperLogLog.
-    #[inline(always)]
-    pub fn insert_hash(&mut self, hash: u64) {
-        let index = hash >> (64 - self.precision);
-        let new = 1 + hash.trailing_zeros() as u8;
-        self.update(new, index as usize);
-    }
-
-    #[inline(always)]
-    fn update(&mut self, new: u8, index: usize) {
-        let old = self.registers[index];
-        self.registers[index] = new.max(old);
-        self.zeros -= (old == 0 && new > 0) as usize;
-        let diff = INV_POW2[old as usize] - INV_POW2[new as usize];
-        self.sum -= diff.max(0.0);
-    }
-
-    /// Inserts all the items in `iter` into the `self`.
-    #[inline]
-    pub fn insert_all<T: Hash, I: IntoIterator<Item = T>>(&mut self, iter: I) {
-        for val in iter {
-            self.insert(&val);
-        }
-    }
-
-    /// Merges another HyperLogLog into `self`, updating the count.
-    /// Returns `Err(Error::IncompatibleLength)` if the two HyperLogLogs have
-    /// different length ([`Self::len`]).
-    ///
-    /// This does not verify that the HLLs use the same hasher or seed.
-    /// If they are different then `self` will be "corrupted".
-    pub fn union(&mut self, other: &Self) -> Result<(), Error> {
-        if self.len() != other.len() {
-            return Err(Error::IncompatibleLength);
-        }
-
-        // TODO? if self.hasher != other.hasher { ... }
-
-        for (i, x) in other.iter().enumerate() {
-            self.update(x, i);
-        }
-
-        Ok(())
+    fn updated_count(&self) -> bool {
+        self.updated_count
     }
 
     /// Returns the approximate number of elements in `self`.
     #[inline]
     pub fn raw_count(&self) -> f64 {
-        self.raw_count_inner(self.zeros, self.sum)
+        match self.updated_count {
+            true => self.raw_count_inner(self.zeros, self.sum),
+            false => self.count_from_scratch(),
+        }
     }
 
     /// Low level method to expose de/serializable parts of `self`.
-    pub fn parts<'a>(&'a self) -> (&'a [u8], &'a S, usize, f64) {
-        (&self.registers, &self.hasher, self.zeros, self.sum)
+    pub fn parts<'a>(&'a self) -> (&'a [u8], &'a S, usize, f64, bool) {
+        (
+            &self.registers,
+            &self.hasher,
+            self.zeros,
+            self.sum,
+            self.updated_count,
+        )
     }
 
     /// Low level method to construct [`Self`] de/serializable parts.
@@ -262,11 +356,17 @@ impl<S: BuildHasher> HyperLogLog<S> {
     ///
     /// let mut before = HyperLogLog::seeded(16, 42);
     /// before.extend(1000..=2000);
-    /// let (x, y, z, w) = before.parts();
-    /// let after = HyperLogLog::from_parts(x.into(), y.clone(), z, w);
+    /// let (x, y, z, w, u) = before.parts();
+    /// let after = HyperLogLog::from_parts(x.into(), y.clone(), z, w, u);
     /// assert_eq!(before, after);
     /// ```
-    pub fn from_parts(registers: Box<[u8]>, hasher: S, zeros: usize, sum: f64) -> Self {
+    pub fn from_parts(
+        registers: Box<[u8]>,
+        hasher: S,
+        zeros: usize,
+        sum: f64,
+        updated_count: bool,
+    ) -> Self {
         let len = registers.len() as u64;
         let precision = len.trailing_zeros();
         assert_eq!(
@@ -283,6 +383,16 @@ impl<S: BuildHasher> HyperLogLog<S> {
             correction: correction(registers.len()),
             registers,
             sum,
+            updated_count,
+        }
+    }
+}
+
+impl<T: Hash, S: BuildHasher> Extend<T> for HyperLogLog<S> {
+    #[inline]
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        for val in iter {
+            self.insert(&val);
         }
     }
 }
@@ -294,76 +404,65 @@ impl<S: BuildHasher> AtomicHyperLogLog<S> {
         self.registers.iter().map(|x| x.load(Relaxed))
     }
 
-    /// Inserts the item into the HyperLogLog.
-    #[inline(always)]
-    pub fn insert<T: Hash + ?Sized>(&self, value: &T) {
-        self.insert_hash(hash_one(&self.hasher, value));
-    }
-
     /// Inserts the hash of an item into the HyperLogLog.
     #[inline(always)]
-    pub fn insert_hash(&self, hash: u64) {
-        let index = hash >> (64 - self.precision);
+    fn insert_inner<const UPDATE_COUNT: bool>(&self, hash: u64) {
+        let index = (hash >> (64 - self.precision)) as usize;
         let new = 1 + hash.trailing_zeros() as u8;
-        self.update(new, index as usize);
+        self.update::<UPDATE_COUNT>(new, index);
     }
 
     #[inline(always)]
-    fn update(&self, new: u8, index: usize) {
+    fn update<const UPDATE_COUNT: bool>(&self, new: u8, index: usize) {
         let old = self.registers[index].fetch_max(new, Relaxed);
-        if old < new {
-            self.zeros.fetch_sub((old == 0) as usize, Relaxed);
-            let diff = INV_POW2[old as usize] - INV_POW2[new as usize];
-            self.sum.fetch_sub(diff, Relaxed);
+        if UPDATE_COUNT && self.updated_count() {
+            if old < new {
+                self.zeros.fetch_sub((old == 0) as usize, Relaxed);
+                let diff = INV_POW2[old as usize] - INV_POW2[new as usize];
+                self.sum.fetch_sub(diff, Relaxed);
+            }
+        } else {
+            self.updated_count.store(false, Relaxed);
         }
     }
 
-    /// Inserts all the items in `iter` into the `self`. Immutable version of [`Self::extend`].
     #[inline]
-    pub fn insert_all<T: Hash, I: IntoIterator<Item = T>>(&self, iter: I) {
-        for val in iter {
-            self.insert(&val);
-        }
-    }
-
-    /// Merges another HyperLogLog into `self`, updating the count.
-    /// Returns `Err(Error::IncompatibleLength)` if the two HyperLogLogs have
-    /// different length ([`Self::len`]).
-    #[inline(always)]
-    pub fn union(&self, other: &Self) -> Result<(), Error> {
-        if self.len() != other.len() {
-            return Err(Error::IncompatibleLength);
-        }
-
-        // TODO? if self.hasher != other.hasher { ... }
-
-        for (i, x) in other.iter().enumerate() {
-            self.update(x, i);
-        }
-
-        Ok(())
+    fn updated_count(&self) -> bool {
+        self.updated_count.load(Relaxed)
     }
 
     /// Returns the approximate number of elements in `self`.
     #[inline]
     pub fn raw_count(&self) -> f64 {
-        let zeros = self.zeros.load(Relaxed);
-        let sum = self.sum.load(Relaxed);
-        self.raw_count_inner(zeros, sum)
+        match self.updated_count() {
+            true => {
+                let zeros = self.zeros.load(Relaxed);
+                let sum = self.sum.load(Relaxed);
+                self.raw_count_inner(zeros, sum)
+            }
+            false => self.count_from_scratch(),
+        }
     }
 
     /// Low level method to expose de/serializable parts of `self`.
-    pub fn parts<'a>(&'a self) -> (&'a [AtomicU8], &'a S, usize, f64) {
+    pub fn parts<'a>(&'a self) -> (&'a [AtomicU8], &'a S, usize, f64, bool) {
         (
             &self.registers,
             &self.hasher,
             self.zeros.load(Relaxed),
             self.sum.load(Relaxed),
+            self.updated_count.load(Relaxed),
         )
     }
 
     /// Low level method to construct [`Self`] de/serializable parts.
-    pub fn from_parts(registers: Box<[AtomicU8]>, hasher: S, zeros: usize, sum: f64) -> Self {
+    pub fn from_parts(
+        registers: Box<[AtomicU8]>,
+        hasher: S,
+        zeros: usize,
+        sum: f64,
+        updated_count: bool,
+    ) -> Self {
         let len = registers.len() as u64;
         let precision = len.trailing_zeros();
         assert_eq!(
@@ -380,6 +479,15 @@ impl<S: BuildHasher> AtomicHyperLogLog<S> {
             correction: correction(registers.len()),
             registers,
             sum: AtomicF64::new(sum),
+            updated_count: AtomicBool::new(updated_count),
+        }
+    }
+
+    /// Inserts all the items in `iter` into the `self`.
+    #[inline]
+    pub fn extend<T: Hash, I: IntoIterator<Item = T>>(&self, iter: I) {
+        for val in iter {
+            self.insert(&val);
         }
     }
 }
@@ -393,6 +501,7 @@ impl<S: BuildHasher + Clone> Clone for AtomicHyperLogLog<S> {
             correction: self.correction,
             registers: self.iter().map(AtomicU8::new).collect::<Vec<_>>().into(),
             sum: AtomicF64::new(self.sum.load(Relaxed)),
+            updated_count: self.updated_count.load(Relaxed).into(),
         }
     }
 }
@@ -521,7 +630,7 @@ macro_rules! impl_tests {
             #[test]
             fn test_clone() {
                 let mut hll = $name::seeded(4, $seed);
-                hll.insert_all(1..10);
+                hll.extend(1..10);
                 let mut cloned = hll.clone();
                 assert_eq!(hll, cloned);
                 for x in 0..=1000 {
@@ -556,6 +665,9 @@ macro_rules! impl_tests {
                             total_err += diff.abs() / real;
                             total_diff += diff / real;
                             counted += 1;
+                            if x % 10000 == 0 {
+                                assert_eq!(hll.raw_count(), hll.count_from_scratch());
+                            }
                         }
                     }
                 }
@@ -582,22 +694,38 @@ macro_rules! impl_tests {
             #[test]
             fn test_union() {
                 for p in 4..=18 {
-                    for seed in 0..=100 {
+                    for seed in 0..=50 {
                         let ranges = [(0, 0), (0, 1), (0, 50), (0, 2000), (0, 10000), (100, 1000)];
                         for (li, lj) in ranges.clone() {
                             for (ri, rj) in ranges.clone() {
-                                let mut left = $name::seeded(p, seed);
-                                let mut right = $name::seeded(p, seed);
-                                let mut control = $name::seeded(p, seed);
+                                for l_updated in [true, false] {
+                                    for r_updated in [true, false] {
+                                        let mut left = $name::seeded(p, seed);
+                                        let mut right = $name::seeded(p, seed);
+                                        let mut control = $name::seeded(p, seed);
 
-                                left.insert_all(li..lj);
-                                right.insert_all(ri..rj);
-                                control.insert_all(li..lj);
-                                control.insert_all(ri..rj);
+                                        for x in li..lj {
+                                            match l_updated {
+                                                true => left.insert(&x),
+                                                false => left.insert_lazy(&x),
+                                            }
+                                        }
 
-                                left.union(&right).unwrap();
-                                assert_eq!(left.raw_count(), control.raw_count());
-                                assert_eq!(left, control);
+                                        for x in ri..rj {
+                                            match r_updated {
+                                                true => right.insert(&x),
+                                                false => right.insert_lazy(&x),
+                                            }
+                                        }
+
+                                        control.extend(li..lj);
+                                        control.extend(ri..rj);
+
+                                        left.union(&right).unwrap();
+                                        assert_eq!(left.raw_count(), control.raw_count());
+                                        assert_eq!(left, control);
+                                    }
+                                }
                             }
                         }
                     }
@@ -629,6 +757,17 @@ macro_rules! impl_tests {
                     assert_eq!(prec, precision);
                 }
             }
+
+            #[test]
+            fn test_count_updated() {
+                for precision in 4..=18 {
+                    let mut hll = $name::seeded(precision, $seed);
+                    assert!(hll.updated_count());
+                    hll.insert_lazy(&42);
+                    let _ = hll.count();
+                    assert!(!hll.updated_count());
+                }
+            }
         }
     };
 }
@@ -646,8 +785,8 @@ mod other_tests {
         for precision in 4..=18 {
             let mut before = HyperLogLog::seeded(precision, 42);
             before.extend(1000..=2000);
-            let (x, y, z, w) = before.parts();
-            let after = HyperLogLog::from_parts(x.into(), y.clone(), z, w);
+            let (x, y, z, w, u) = before.parts();
+            let after = HyperLogLog::from_parts(x.into(), y.clone(), z, w, u);
             assert_eq!(before, after);
         }
     }
@@ -655,15 +794,15 @@ mod other_tests {
     #[test]
     fn test_parts_atomic() {
         for precision in 4..=18 {
-            let mut before = AtomicHyperLogLog::seeded(precision, 42);
+            let before = AtomicHyperLogLog::seeded(precision, 42);
             before.extend(1000..=2000);
-            let (x, y, z, w) = before.parts();
+            let (x, y, z, w, u) = before.parts();
             let f = x
                 .iter()
                 .map(|g| AtomicU8::new(g.load(Relaxed)))
                 .collect::<Vec<AtomicU8>>()
                 .into();
-            let after = AtomicHyperLogLog::from_parts(f, y.clone(), z, w);
+            let after = AtomicHyperLogLog::from_parts(f, y.clone(), z, w, u);
             assert_eq!(before, after);
         }
     }
@@ -678,9 +817,9 @@ mod atomic_parity_tests {
     fn count_parity() {
         for precision in 4..=18 {
             let mut non = HyperLogLog::seeded(precision, 42);
-            non.insert_all(0..=1000);
+            non.extend(0..=1000);
             let atomic = AtomicHyperLogLog::seeded(precision, 42);
-            atomic.insert_all(0..=1000);
+            atomic.extend(0..=1000);
             assert_eq!(non.raw_count(), atomic.raw_count());
         }
     }
@@ -690,9 +829,9 @@ mod atomic_parity_tests {
     fn serde_parity() {
         for precision in 4..=18 {
             let mut non = HyperLogLog::seeded(precision, 42);
-            non.insert_all(0..=1000);
+            non.extend(0..=1000);
             let atomic = AtomicHyperLogLog::seeded(precision, 42);
-            atomic.insert_all(0..=1000);
+            atomic.extend(0..=1000);
 
             let non_bytes = serde_cbor::to_vec(&non).unwrap();
             let atomic_bytes = serde_cbor::to_vec(&atomic).unwrap();
@@ -716,12 +855,12 @@ mod loom_tests {
         loom::model(|| {
             let hll = loom::sync::Arc::new(AtomicHyperLogLog::seeded(4, 42));
             let expected = AtomicHyperLogLog::seeded(4, 42);
-            expected.insert_all(1..=4);
+            expected.extend(1..=4);
             let handles: Vec<_> = [(1..=2), (2..=4)]
                 .into_iter()
                 .map(|data| {
                     let v = hll.clone();
-                    loom::thread::spawn(move || v.insert_all(data))
+                    loom::thread::spawn(move || v.extend(data))
                 })
                 .collect();
 

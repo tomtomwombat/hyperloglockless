@@ -57,3 +57,15 @@ pub(crate) fn ceil(x: f64) -> f64 {
 pub(crate) fn ceil(x: f64) -> f64 {
     libm::ceil(x)
 }
+
+#[cfg(feature = "std")]
+#[inline]
+pub(crate) fn round(x: f64) -> f64 {
+    x.round()
+}
+
+#[cfg(not(feature = "std"))]
+#[inline]
+pub(crate) fn round(x: f64) -> f64 {
+    libm::round(x)
+}

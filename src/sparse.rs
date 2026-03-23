@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 
 /// We compact the u64 hash into an encoded u32 for storage in the diff vec.
 /// When converting to dense representation, encoded hashes are decoded.
-/// The trailing 0s and regsiter index of the original u64 hash are recovered from the decoded value.
+/// The trailing 0s and register index of the original u64 hash are recovered from the decoded value.
 /// The encoding scheme reserves 7 bits for trailing zeros: 6 bits for the max value, 64, and an extra bit to
 /// indicate either the value of the trailing zeros is used or part of the hash itself with trailing zeros equal to the
 /// full hash itself. Part of the hash is used instead of the trailing zero count to reduce collisions of encoded values, i.e.
@@ -153,15 +153,14 @@ impl SparseLogLog {
     }
 
     #[inline]
-    fn hll_size_bytes(&self) -> usize {
-        (1 << self.precision) as usize
+    fn hll_size_bytes(precision: u8) -> usize {
+        (1 << precision) as usize
     }
 
     #[inline]
-    fn should_flush(&self) -> bool {
-        let dense_hll_size = self.hll_size_bytes() << 2;
-        let new_size = self.new.len();
-        new_size * Self::NEW_SIZE_FACTOR > dense_hll_size
+    fn should_flush(len: usize, precision: u8) -> bool {
+        let dense_hll_size = Self::hll_size_bytes(precision) << 2;
+        len * Self::NEW_SIZE_FACTOR > dense_hll_size
     }
 
     #[inline]
@@ -175,14 +174,14 @@ impl SparseLogLog {
             self.new.reserve_exact(new_cap - self.new.len());
         }
         self.new.push(encoded);
-        if self.should_flush() {
+        if Self::should_flush(self.new.len(), self.precision) {
             self.flush()
         }
     }
 
     #[inline]
     pub(crate) fn flush_inner(&mut self, mut other: impl ExactSizeIterator<Item = u32>) {
-        // TODO: empiraclly derive the size from the precision
+        // TODO: empirically derive the size from the precision
         let size = self.indexes.size() + (other.len() * 3);
         let max_size = self.indexes.size() + (other.len() * 5) + 8;
         let mut buf = DiffVec::with_size(size, max_size);
@@ -246,7 +245,7 @@ impl SparseLogLog {
 
     #[inline]
     pub fn full(&self) -> bool {
-        self.indexes.size() > self.hll_size_bytes()
+        self.indexes.size() > Self::hll_size_bytes(self.precision)
     }
 }
 
@@ -257,7 +256,7 @@ impl From<SparseLogLog> for HyperLogLog {
         let mut hll = HyperLogLog::new(sparse.precision);
         for encoded in registers {
             let (rank, register) = decode_hash(encoded, sparse.precision);
-            hll.update(rank as u8, register);
+            hll.update::<true>(rank as u8, register);
         }
         hll
     }
@@ -340,9 +339,9 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
 
     /// Inserts all the items in `iter` into the `self`.
     #[inline]
-    pub fn insert_all<T: Hash, I: IntoIterator<Item = T>>(&mut self, iter: I) {
+    pub fn insert_all<'a, T: Hash + 'a, I: Iterator<Item = &'a T>>(&mut self, iter: I) {
         for val in iter {
-            self.insert(&val);
+            self.insert(val);
         }
     }
 
@@ -363,7 +362,7 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
     /// Returns the approximate number of elements in `self`.
     #[inline]
     pub fn count(&mut self) -> usize {
-        self.raw_count() as usize
+        crate::math::round(self.raw_count()) as usize
     }
 
     /// Returns the approximate number of elements in `self`.
@@ -423,11 +422,11 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
                 let dense = self.dense.as_mut().unwrap();
                 for encoded in sparse.new.iter() {
                     let (rank, register) = decode_hash(*encoded, sparse.precision);
-                    dense.update(rank as u8, register);
+                    dense.update::<true>(rank as u8, register);
                 }
                 for encoded in sparse.indexes.into_iter() {
                     let (rank, register) = decode_hash(encoded, sparse.precision);
-                    dense.update(rank as u8, register);
+                    dense.update::<true>(rank as u8, register);
                 }
                 Ok(())
             }
@@ -499,7 +498,7 @@ mod sparse_tests {
         for _ in 0..num {
             sll.insert_hash(randnum);
         }
-        assert_eq!(sll.count().round() as usize, 1);
+        assert_eq!(crate::math::round(sll.count()) as usize, 1);
     }
 
     #[test]
@@ -509,12 +508,12 @@ mod sparse_tests {
             for (li, lj) in ranges.clone() {
                 for (ri, rj) in ranges.clone() {
                     let mut left = HyperLogLogPlus::seeded(12, seed);
-                    left.insert_all(li..lj);
+                    left.extend(li..lj);
                     let mut right = HyperLogLogPlus::seeded(12, seed);
-                    right.insert_all(ri..rj);
+                    right.extend(ri..rj);
                     let mut control = HyperLogLogPlus::seeded(12, seed);
-                    control.insert_all(li..lj);
-                    control.insert_all(ri..rj);
+                    control.extend(li..lj);
+                    control.extend(ri..rj);
 
                     left.union(&right).unwrap();
                     assert_eq!(
