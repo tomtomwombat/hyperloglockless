@@ -33,7 +33,7 @@ assert_eq!(precision, 14);
 
 let mut hll = HyperLogLog::new(precision);
 hll.insert(&'🦀');
-hll.insert_all('a'..='z');
+hll.extend('a'..='z');
 
 let count = hll.count(); // ~27
 assert_eq!(hll.len(), 1 << precision); // 16384 bytes
@@ -53,7 +53,6 @@ use hyperloglockless::AtomicHyperLogLog;
 
 let hll = AtomicHyperLogLog::new(14);
 hll.insert(&'🦀');
-hll.insert_all('a'..='z');
 ```
 
 A more compact and accurate "sparse" representation that switches to classic HLL automatically when memory reaches the same as classic HLL:
@@ -62,7 +61,7 @@ use hyperloglockless::HyperLogLogPlus;
 
 let mut hll = HyperLogLogPlus::new(14);
 hll.insert(&'🦀');
-hll.insert_all('a'..='z');
+hll.extend('a'..='z');
 ```
 
 ## Performance
