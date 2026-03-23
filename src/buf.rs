@@ -14,11 +14,7 @@ impl Buf {
     #[inline]
     pub fn new(cap: usize, max_len: usize) -> Self {
         let buf: Vec<_> = repeat(0).take(cap).collect();
-        Self {
-            buf,
-            len: 0,
-            max_len,
-        }
+        Self { buf, len: 0, max_len }
     }
 
     #[inline]

@@ -22,10 +22,13 @@ impl<H: Hasher + Clone> BuildHasher for CloneBuildHasher<H> {
     }
 }
 
-/// The default hasher for [`crate::HyperLogLog`] and [`crate::AtomicHyperLogLog`].
+/// The default hasher for [`crate::HyperLogLog`] and
+/// [`crate::AtomicHyperLogLog`].
 ///
-/// `DefaultHasher` has a faster `build_hasher` than `std::collections::hash_map::RandomState` or `SipHasher13`.
-/// This is important because `build_hasher` is called once for every actual hash.
+/// `DefaultHasher` has a faster `build_hasher` than
+/// `std::collections::hash_map::RandomState` or `SipHasher13`.
+/// This is important because `build_hasher` is called once for every actual
+/// hash.
 pub type DefaultHasher = CloneBuildHasher<RandomDefaultHasher>;
 
 impl DefaultHasher {

@@ -33,7 +33,8 @@ pub use sparse::HyperLogLogPlus;
 mod buf;
 mod vint;
 
-/// HyperLogLog is a data structure for the "count-distinct problem", approximating the number of distinct elements in a multiset.
+/// HyperLogLog is a data structure for the "count-distinct problem",
+/// approximating the number of distinct elements in a multiset.
 ///
 /// # Example
 /// ```rust
@@ -48,7 +49,8 @@ mod vint;
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HyperLogLog<S = DefaultHasher> {
-    /// `registers[k]` is the maximum trailing zeros for all 64-bit hashes assigned to kth register
+    /// `registers[k]` is the maximum trailing zeros for all 64-bit hashes
+    /// assigned to kth register
     registers: Box<[u8]>,
     /// `registers.len() == 1 << precision`
     precision: u32,
@@ -59,7 +61,8 @@ pub struct HyperLogLog<S = DefaultHasher> {
     updated_count: bool,
 }
 
-/// HyperLogLog is a data structure for the "count-distinct problem", approximating the number of distinct elements in a multiset.
+/// HyperLogLog is a data structure for the "count-distinct problem",
+/// approximating the number of distinct elements in a multiset.
 /// [`AtomicHyperLogLog`] is the thread-safe counterpart of [`HyperLogLog`].
 ///
 /// # Example
@@ -75,7 +78,8 @@ pub struct HyperLogLog<S = DefaultHasher> {
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AtomicHyperLogLog<S = DefaultHasher> {
-    /// `registers[k]` is the maximum trailing zeros for all 64-bit hashes assigned to kth register
+    /// `registers[k]` is the maximum trailing zeros for all 64-bit hashes
+    /// assigned to kth register
     registers: Box<[AtomicU8]>,
     /// `registers.len() == 1 << precision`
     precision: u32,
@@ -87,8 +91,8 @@ pub struct AtomicHyperLogLog<S = DefaultHasher> {
 }
 
 impl<S: BuildHasher> HyperLogLog<S> {
-    /// Returns a new `HyperLogLog` with `1 << precision` registers (1 byte each)
-    /// using the provided hasher.
+    /// Returns a new `HyperLogLog` with `1 << precision` registers (1 byte
+    /// each) using the provided hasher.
     pub fn with_hasher(precision: u8, hasher: S) -> Self {
         validate_precision(precision);
         let num_registers = 1 << precision;
@@ -106,8 +110,8 @@ impl<S: BuildHasher> HyperLogLog<S> {
 }
 
 impl<S: BuildHasher> AtomicHyperLogLog<S> {
-    /// Returns a new `AtomicHyperLogLog` with `1 << precision` registers (1 byte each)
-    /// using the provided hasher.
+    /// Returns a new `AtomicHyperLogLog` with `1 << precision` registers (1
+    /// byte each) using the provided hasher.
     pub fn with_hasher(precision: u8, hasher: S) -> Self {
         validate_precision(precision);
         let num_registers = 1 << precision;
@@ -339,13 +343,7 @@ impl<S: BuildHasher> HyperLogLog<S> {
 
     /// Low level method to expose de/serializable parts of `self`.
     pub fn parts<'a>(&'a self) -> (&'a [u8], &'a S, usize, f64, bool) {
-        (
-            &self.registers,
-            &self.hasher,
-            self.zeros,
-            self.sum,
-            self.updated_count,
-        )
+        (&self.registers, &self.hasher, self.zeros, self.sum, self.updated_count)
     }
 
     /// Low level method to construct [`Self`] de/serializable parts.
@@ -360,20 +358,10 @@ impl<S: BuildHasher> HyperLogLog<S> {
     /// let after = HyperLogLog::from_parts(x.into(), y.clone(), z, w, u);
     /// assert_eq!(before, after);
     /// ```
-    pub fn from_parts(
-        registers: Box<[u8]>,
-        hasher: S,
-        zeros: usize,
-        sum: f64,
-        updated_count: bool,
-    ) -> Self {
+    pub fn from_parts(registers: Box<[u8]>, hasher: S, zeros: usize, sum: f64, updated_count: bool) -> Self {
         let len = registers.len() as u64;
         let precision = len.trailing_zeros();
-        assert_eq!(
-            precision + len.leading_zeros(),
-            63,
-            "resigers.len() not a power of 2"
-        );
+        assert_eq!(precision + len.leading_zeros(), 63, "resigers.len() not a power of 2");
         assert_eq!(1 << precision, registers.len());
         validate_precision(precision as u8);
         Self {
@@ -456,20 +444,10 @@ impl<S: BuildHasher> AtomicHyperLogLog<S> {
     }
 
     /// Low level method to construct [`Self`] de/serializable parts.
-    pub fn from_parts(
-        registers: Box<[AtomicU8]>,
-        hasher: S,
-        zeros: usize,
-        sum: f64,
-        updated_count: bool,
-    ) -> Self {
+    pub fn from_parts(registers: Box<[AtomicU8]>, hasher: S, zeros: usize, sum: f64, updated_count: bool) -> Self {
         let len = registers.len() as u64;
         let precision = len.trailing_zeros();
-        assert_eq!(
-            precision + len.leading_zeros(),
-            63,
-            "resigers.len() not a power of 2"
-        );
+        assert_eq!(precision + len.leading_zeros(), 63, "resigers.len() not a power of 2");
         assert_eq!(1 << precision, registers.len());
         validate_precision(precision as u8);
         Self {
@@ -508,10 +486,7 @@ impl<S: BuildHasher + Clone> Clone for AtomicHyperLogLog<S> {
 
 #[inline]
 fn validate_precision(precision: u8) {
-    assert!(
-        (4..=18).contains(&precision),
-        "Precisions 4..=18 supported only."
-    );
+    assert!((4..=18).contains(&precision), "Precisions 4..=18 supported only.");
 }
 
 static INV_POW2: [f64; 66] = [
@@ -583,7 +558,8 @@ static INV_POW2: [f64; 66] = [
     0.00000000000000000002710505431213761085018632002174854278564453125,
 ];
 
-/// Returns the HyperLogLog precision that will have the error for calls to `count` and `raw_count`.
+/// Returns the HyperLogLog precision that will have the error for calls to
+/// `count` and `raw_count`.
 #[inline]
 pub fn precision_for_error(error: f64) -> u8 {
     assert!(0.0 < error && error < 1.0);
@@ -591,7 +567,8 @@ pub fn precision_for_error(error: f64) -> u8 {
     ceil(log2(pow(bias_constant / error, 2.0))) as u8
 }
 
-/// Returns the approximate error of `count` and `raw_count` given the precision of a [`HyperLogLog`] or [`AtomicHyperLogLog`].
+/// Returns the approximate error of `count` and `raw_count` given the precision
+/// of a [`HyperLogLog`] or [`AtomicHyperLogLog`].
 #[inline]
 pub fn error_for_precision(precision: u8) -> f64 {
     validate_precision(precision);

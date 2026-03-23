@@ -9,12 +9,15 @@ use alloc::vec::Vec;
 
 /// We compact the u64 hash into an encoded u32 for storage in the diff vec.
 /// When converting to dense representation, encoded hashes are decoded.
-/// The trailing 0s and register index of the original u64 hash are recovered from the decoded value.
-/// The encoding scheme reserves 7 bits for trailing zeros: 6 bits for the max value, 64, and an extra bit to
-/// indicate either the value of the trailing zeros is used or part of the hash itself with trailing zeros equal to the
-/// full hash itself. Part of the hash is used instead of the trailing zero count to reduce collisions of encoded values, i.e.
-/// two values are more likely to share the trailing zero count than being equal.
-/// The remaining 25 bits are to encoded the register, and additional entropy from the hash.
+/// The trailing 0s and register index of the original u64 hash are recovered
+/// from the decoded value. The encoding scheme reserves 7 bits for trailing
+/// zeros: 6 bits for the max value, 64, and an extra bit to indicate either the
+/// value of the trailing zeros is used or part of the hash itself with trailing
+/// zeros equal to the full hash itself. Part of the hash is used instead of the
+/// trailing zero count to reduce collisions of encoded values, i.e. two values
+/// are more likely to share the trailing zero count than being equal.
+/// The remaining 25 bits are to encoded the register, and additional entropy
+/// from the hash.
 const MAX_PRECISION: u8 = 25; // u32::BITS - u64::MAX.trailing_ones() - 1;
 
 #[inline]
@@ -137,11 +140,12 @@ struct SparseLogLog {
 }
 
 impl SparseLogLog {
-    /// Fraction (1 / X) of dense memory (1 << precision bytes) before flushing `new` into sparse.
-    /// I.e. we flush X many times before converting to dense representation.
-    /// Just before the flush, we theoretically use dense_mem / X + sparse_mem.
-    /// There's a trade-off in speed vs memory: the larger X is, the less memory we use but slower due to more frequent flushing.
-    /// Note we flush anytime count is called regardless of X.
+    /// Fraction (1 / X) of dense memory (1 << precision bytes) before flushing
+    /// `new` into sparse. I.e. we flush X many times before converting to
+    /// dense representation. Just before the flush, we theoretically use
+    /// dense_mem / X + sparse_mem. There's a trade-off in speed vs memory:
+    /// the larger X is, the less memory we use but slower due to more frequent
+    /// flushing. Note we flush anytime count is called regardless of X.
     const NEW_SIZE_FACTOR: usize = 25;
 
     pub fn new(precision: u8) -> Self {
@@ -168,8 +172,7 @@ impl SparseLogLog {
         let encoded = encode_hash(hash);
         if self.new.len() == self.new.capacity() {
             let dense_hll_size = ((1 << self.precision) as usize) << 2;
-            let max_len =
-                crate::math::ceil(dense_hll_size as f64 / Self::NEW_SIZE_FACTOR as f64) as usize;
+            let max_len = crate::math::ceil(dense_hll_size as f64 / Self::NEW_SIZE_FACTOR as f64) as usize;
             let new_cap = core::cmp::min(1 + (3 * self.new.len()) >> 1, max_len);
             self.new.reserve_exact(new_cap - self.new.len());
         }
@@ -264,12 +267,14 @@ impl From<SparseLogLog> for HyperLogLog {
 
 /// An implementation of the the [HyperLogLog++](https://static.googleusercontent.com/media/research.google.com/en//pubs/archive/40671.pdf) data structure.
 ///
-/// For small cardinalities, a "sparse" representation is used. The sparse representation is more accurate and uses less memory,
-/// but has slower insert speed.
-/// The error and memory usage of the sparse representation scales roughly linearly with the number of items inserted. When
-/// the memory of the sparse representation equals the memory of the dense representation, it switches to dense automatically.
-/// This happens inside the `insert`/`insert_hash` call (which is why it needs `&mut self`). The error of the sparse representation
-/// never exceeds that of the dense.
+/// For small cardinalities, a "sparse" representation is used. The sparse
+/// representation is more accurate and uses less memory, but has slower insert
+/// speed. The error and memory usage of the sparse representation scales
+/// roughly linearly with the number of items inserted. When the memory of the
+/// sparse representation equals the memory of the dense representation, it
+/// switches to dense automatically. This happens inside the
+/// `insert`/`insert_hash` call (which is why it needs `&mut self`). The error
+/// of the sparse representation never exceeds that of the dense.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HyperLogLogPlus<S = DefaultHasher> {
@@ -280,17 +285,17 @@ pub struct HyperLogLogPlus<S = DefaultHasher> {
 
 impl HyperLogLogPlus {
     /// Returns a new [`Self`] using the default hasher with a random seed.
-    /// [`Self`] is initialized to use the compact and dynamically sized sparse representation,
-    /// but later switches to the dense representation when it uses equal memory
-    /// (`1 << precision` registers (1 byte each)).
+    /// [`Self`] is initialized to use the compact and dynamically sized sparse
+    /// representation, but later switches to the dense representation when
+    /// it uses equal memory (`1 << precision` registers (1 byte each)).
     pub fn new(precision: u8) -> Self {
         Self::with_hasher(precision, DefaultHasher::default())
     }
 
     /// Returns a new [`Self`] using the default hasher seeded with `seed`.
-    /// [`Self`] is initialized to use the compact and dynamically sized sparse representation,
-    /// but later switches to the dense representation when it uses equal memory
-    /// (`1 << precision` registers, 1 byte each).
+    /// [`Self`] is initialized to use the compact and dynamically sized sparse
+    /// representation, but later switches to the dense representation when
+    /// it uses equal memory (`1 << precision` registers, 1 byte each).
     pub fn seeded(precision: u8, seed: u128) -> Self {
         Self::with_hasher(precision, DefaultHasher::seeded(&seed.to_be_bytes()))
     }
@@ -298,9 +303,9 @@ impl HyperLogLogPlus {
 
 impl<S: BuildHasher> HyperLogLogPlus<S> {
     /// Returns a new [`Self`] using the provided hasher.
-    /// [`Self`] is initialized to use the compact and dynamically sized sparse representation,
-    /// but later switches to the dense representation when it uses equal memory
-    /// (`1 << precision` registers, 1 byte each).
+    /// [`Self`] is initialized to use the compact and dynamically sized sparse
+    /// representation, but later switches to the dense representation when
+    /// it uses equal memory (`1 << precision` registers, 1 byte each).
     pub fn with_hasher(precision: u8, hasher: S) -> Self {
         crate::validate_precision(precision);
         Self {
@@ -324,14 +329,16 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
     }
 
     /// Inserts the hash of an item into the HyperLogLogPlus.
-    /// `self` switches to dense mode if sparse mode exceeds memory usage of dense mode.
+    /// `self` switches to dense mode if sparse mode exceeds memory usage of
+    /// dense mode.
     #[inline]
     pub fn insert_hash(&mut self, hash: u64) {
         [Self::insert_dense, Self::insert_sparse][self.is_sparse() as usize](self, hash);
     }
 
     /// Inserts the item into the HyperLogLogPlus.
-    /// `self` switches to dense mode if sparse mode exceeds memory usage of dense mode.
+    /// `self` switches to dense mode if sparse mode exceeds memory usage of
+    /// dense mode.
     #[inline]
     pub fn insert<T: Hash + ?Sized>(&mut self, value: &T) {
         self.insert_hash(crate::hash_one(&self.hasher, value));
@@ -400,22 +407,11 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
             return Err(Error::IncompatibleLength);
         }
         match (self.is_sparse(), other.is_sparse()) {
-            (true, true) => self
-                .sparse
-                .as_mut()
-                .unwrap()
-                .union(other.sparse.as_ref().unwrap()),
-            (false, false) => self
-                .dense
-                .as_mut()
-                .unwrap()
-                .union(other.dense.as_ref().unwrap()),
+            (true, true) => self.sparse.as_mut().unwrap().union(other.sparse.as_ref().unwrap()),
+            (false, false) => self.dense.as_mut().unwrap().union(other.dense.as_ref().unwrap()),
             (true, false) => {
                 self.swap();
-                self.dense
-                    .as_mut()
-                    .unwrap()
-                    .union(other.dense.as_ref().unwrap())
+                self.dense.as_mut().unwrap().union(other.dense.as_ref().unwrap())
             }
             (false, true) => {
                 let sparse = other.sparse.as_ref().unwrap();
