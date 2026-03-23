@@ -12,7 +12,7 @@ use core::sync::atomic::Ordering::Relaxed;
 pub(crate) use loom::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize};
 
 #[cfg(not(feature = "loom"))]
-pub(crate) use core::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize};
+pub(crate) use portable_atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize};
 
 #[cfg(all(feature = "loom", feature = "serde"))]
 compile_error!("features `loom` and `serde` are mutually exclusive");
