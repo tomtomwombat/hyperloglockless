@@ -261,28 +261,62 @@ macro_rules! impl_hll {
                 self.raw_count()
             }
 
-            /// Merges another HyperLogLog into `self`, updating the count.
+            #[cold]
+            fn err(e: Error) -> Result<(), Error> {
+                Err(e)
+            }
+
+            #[inline]
+            fn validate_compat(&self, other: &Self) -> Result<(), Error> {
+                if self.len() != other.len() {
+                    return Self::err(Error::IncompatibleLength);
+                }
+                // TODO? if self.hasher != other.hasher { ... }
+                Ok(())
+            }
+
+            /// Merges another HyperLogLog into `self`, deferring count maintenance.
+            ///
+            /// This updates the registers exactly as in [`Self::union`], but does not
+            /// maintain the cached count. Instead, the count is invalidated.
+            ///
+            /// The next call to [`Self::count`] or [`Self::raw_count`] will recompute the
+            /// count by scanning all registers.
+            ///
+            /// Returns `Err(Error::IncompatibleLength)` if the two HyperLogLogs have
+            /// different length ([`Self::len`]).
+            ///
+            /// This does not verify that the HLLs use the same hasher or seed.
+            /// If they are different then `self` will be "corrupted".
+            pub fn union_lazy(&$($m)? self, other: &Self) -> Result<(), Error> {
+                self.validate_compat(other)?;
+                other.iter().enumerate().for_each(|(i, x)| self.update::<false>(x, i));
+                Ok(())
+            }
+
+            /// Merges another HyperLogLog into `self`, maintaining the cached count when possible.
+            ///
+            /// If the cached count is currently valid, this method updates it incrementally,
+            /// keeping [`Self::count`] O(1).
+            ///
+            /// If the cached count has already been invalidated (e.g. via
+            /// [`Self::insert_lazy`] or [`Self::union_lazy`]), this behaves like
+            /// [`Self::union_lazy`] and leaves the count invalidated.
+            ///
             /// Returns `Err(Error::IncompatibleLength)` if the two HyperLogLogs have
             /// different length ([`Self::len`]).
             ///
             /// This does not verify that the HLLs use the same hasher or seed.
             /// If they are different then `self` will be "corrupted".
             pub fn union(&$($m)? self, other: &Self) -> Result<(), Error> {
-                if self.len() != other.len() {
-                    return Err(Error::IncompatibleLength);
-                }
-
-                // TODO? if self.hasher != other.hasher { ... }
-
+                self.validate_compat(other)?;
                 if self.updated_count() {
                     other.iter().enumerate().for_each(|(i, x)| self.update::<true>(x, i));
                 } else {
                     other.iter().enumerate().for_each(|(i, x)| self.update::<false>(x, i));
                 }
-
                 Ok(())
             }
-
         }
 
         impl<S: BuildHasher> PartialEq for $name<S> {
@@ -698,9 +732,16 @@ macro_rules! impl_tests {
                                         control.extend(li..lj);
                                         control.extend(ri..rj);
 
+                                        let mut lazy_left = left.clone();
                                         left.union(&right).unwrap();
+                                        lazy_left.union_lazy(&right).unwrap();
                                         assert_eq!(left.raw_count(), control.raw_count());
+                                        assert_eq!(lazy_left.raw_count(), control.raw_count());
                                         assert_eq!(left, control);
+                                        assert_eq!(left, lazy_left);
+                                        let right_clone = right.clone();
+                                        right.union(&right_clone).unwrap();
+                                        assert_eq!(right, right_clone);
                                     }
                                 }
                             }
