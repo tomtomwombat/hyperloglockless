@@ -296,8 +296,8 @@ impl HyperLogLogPlus {
     /// [`Self`] is initialized to use the compact and dynamically sized sparse
     /// representation, but later switches to the dense representation when
     /// it uses equal memory (`1 << precision` registers, 1 byte each).
-    pub fn seeded(precision: u8, seed: u128) -> Self {
-        Self::with_hasher(precision, DefaultHasher::seeded(&seed.to_be_bytes()))
+    pub fn seeded(precision: u8, seed: u64) -> Self {
+        Self::with_hasher(precision, DefaultHasher::seeded(seed))
     }
 }
 
