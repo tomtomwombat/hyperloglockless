@@ -139,8 +139,8 @@ macro_rules! impl_hll {
 
             /// Returns a new [`Self`] with `1 << precision` registers (1 byte each)
             /// using the default hasher seeded with `seed`.
-            pub fn seeded(precision: u8, seed: u128) -> $name<DefaultHasher> {
-                $name::with_hasher(precision, DefaultHasher::seeded(&seed.to_be_bytes()))
+            pub fn seeded(precision: u8, seed: u64) -> $name<DefaultHasher> {
+                $name::with_hasher(precision, DefaultHasher::seeded(seed))
             }
         }
 

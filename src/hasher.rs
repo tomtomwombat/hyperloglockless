@@ -1,5 +1,5 @@
 use core::hash::{BuildHasher, Hasher};
-use siphasher::sip::SipHasher13;
+use twox_hash::XxHash64;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -32,7 +32,7 @@ impl<H: Hasher + Clone> BuildHasher for CloneBuildHasher<H> {
 pub type DefaultHasher = CloneBuildHasher<RandomDefaultHasher>;
 
 impl DefaultHasher {
-    pub fn seeded(seed: &[u8; 16]) -> Self {
+    pub fn seeded(seed: u64) -> Self {
         Self {
             hasher: RandomDefaultHasher::seeded(seed),
         }
@@ -41,12 +41,12 @@ impl DefaultHasher {
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct RandomDefaultHasher(SipHasher13);
+pub struct RandomDefaultHasher(XxHash64);
 
 impl RandomDefaultHasher {
     #[inline]
-    pub fn seeded(seed: &[u8; 16]) -> Self {
-        Self(SipHasher13::new_with_key(seed))
+    pub fn seeded(seed: u64) -> Self {
+        Self(XxHash64::with_seed(seed))
     }
 }
 
@@ -56,18 +56,13 @@ impl Default for RandomDefaultHasher {
         #[cfg(not(feature = "rand"))]
         {
             use foldhash::fast::RandomState;
-            let state_a = RandomState::default();
-            let state_b = RandomState::default();
-            let lo = state_a.build_hasher().finish() as u128;
-            let hi = state_b.build_hasher().finish() as u128;
-            Self::seeded(&((hi << 64) | lo).to_ne_bytes())
+            let seed = RandomState::default().build_hasher().finish();
+            Self::seeded(seed)
         }
         #[cfg(feature = "rand")]
         {
-            let mut seed = [0u8; 16];
-            use rand::RngCore;
-            rand::rng().fill_bytes(&mut seed);
-            Self::seeded(&seed)
+            use rand::Rng;
+            Self::seeded(rand::rng().random())
         }
     }
 }
@@ -135,7 +130,6 @@ impl Hasher for RandomDefaultHasher {
 mod test {
     use crate::hasher::RandomDefaultHasher;
     use core::hash::Hasher;
-    use siphasher::sip::SipHasher13;
 
     fn hash_all(mut x: impl Hasher) -> u64 {
         x.write(&[1; 16]);
@@ -156,8 +150,8 @@ mod test {
 
     #[test]
     fn test_hasher() {
-        let h1 = RandomDefaultHasher::seeded(&[0; 16]);
-        let h2 = SipHasher13::new_with_key(&[0; 16]);
+        let h1 = RandomDefaultHasher::seeded(0);
+        let h2 = RandomDefaultHasher::seeded(0);
         assert_eq!(hash_all(h1), hash_all(h2),);
     }
 }
