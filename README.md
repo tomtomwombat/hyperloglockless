@@ -68,7 +68,7 @@ hll.extend('a'..='z');
 
 An overall benchmark where N items are inserted and a single count call is made afterwards. hyperloglockless has O(1) cardinality queries without sacrificing insert throughput. It excels when there are many cardinality queries and/or when the inserts are <65K. For larger inserts, it keeps up well since internal book-keeping is quick.
 
-![fp-micro](https://github.com/user-attachments/assets/3ea6d311-6986-4796-84f9-d90524c52c63)
+![perf-fill](https://github.com/user-attachments/assets/e46590a7-49e5-4cb2-b246-e13ebb736c1f)
 
 ## Accuracy
 hyperloglockless stays consistently accurate while other implementations break down after millions of items. hyperloglockless's sparse HLL is ~100x more accurate than other sparse implementations. It achieves high accuracy by cramming more information into each hash encoding and using more accurate error correction models.
