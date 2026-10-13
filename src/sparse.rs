@@ -355,7 +355,7 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
     /// dense mode.
     #[inline(always)]
     pub fn insert<T: Hash + ?Sized>(&mut self, value: &T) {
-        self.insert_hash(crate::hash_one(&self.hasher, value));
+        self.insert_hash(self.hasher.hash_one(value));
     }
 
     /// Inserts all the items in `iter` into `self`.
@@ -377,7 +377,7 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
         self.dense
             .as_mut()
             .unwrap()
-            .insert_all_hash(iter.map(|val| crate::hash_one(&self.hasher, val.borrow())));
+            .insert_all_hash(iter.map(|val| self.hasher.hash_one(val.borrow())));
     }
 
     #[inline]
@@ -389,7 +389,7 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
     {
         let sparse = self.sparse.as_mut().unwrap();
         for x in iter.by_ref() {
-            sparse.insert_hash(crate::hash_one(&self.hasher, x.borrow()));
+            sparse.insert_hash(self.hasher.hash_one(x.borrow()));
             if sparse.full() {
                 self.swap();
                 return true;

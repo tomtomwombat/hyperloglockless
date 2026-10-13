@@ -39,10 +39,10 @@ let count = hll.count(); // ~27
 assert_eq!(hll.len(), 1 << precision); // 16384 bytes
 ```
 
-The default hasher is `twox_hash` because of its portability, MSRV, and reasonable speed. However, you may use any hasher:
+The default hasher uses rapidhash's `quality` flavor, which is designed for low collision rates in algorithms such as HyperLogLog. However, you may use any hasher:
 ```rust
 use hyperloglockless::HyperLogLog;
-use foldhash::fast::RandomState;
+use std::collections::hash_map::RandomState;
 
 let hll = HyperLogLog::with_hasher(14, RandomState::default());
 ```
@@ -93,7 +93,7 @@ Below measures and compares the amortized insert performance of `hyperloglockles
 
 ## Available Features
 
-- **`rand`** - Enabled by default, this has the `DefaultHasher` source its random state using `thread_rng()` instead of hardware sources. Getting entropy from a user-space source is considerably faster, but requires additional dependencies to achieve this. Disabling this feature by using `default-features = false` makes `DefaultHasher` source its entropy using `foldhash`, which will have a much simpler code footprint at the expense of speed.
+- **`rand`** - Enabled by default. Uses `rand`'s thread-local RNG to seed the default hasher. Disabling this feature by using `default-features = false` keeps the crate `no_std` and uses rapidhash's fallback entropy sources. Rapidhash is built with no features in either configuration.
 - **`serde`** - HyperLogLogs implement `Serialize` and `Deserialize` when possible.
 - **`loom`** - `AtomicHyperLogLog`s use [loom](https://github.com/tokio-rs/loom) atomics, making it compatible with loom testing.
 

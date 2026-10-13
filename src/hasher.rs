@@ -1,5 +1,17 @@
 use core::hash::{BuildHasher, Hasher};
-use twox_hash::XxHash64;
+#[cfg(not(feature = "rand"))]
+use rapidhash::quality::RandomState;
+use rapidhash::quality::{RapidHasher, SeedableState};
+
+const RAPID_SECRETS: [u64; 7] = [
+    0x2d35_8dcc_aa6c_78a5,
+    0x8bb8_4b93_962e_acc9,
+    0x4b33_a62e_857b_191d,
+    0x6a9d_1a5b_4f3c_2e17,
+    0x1c69_b3f7_4ac4_ae35,
+    0x9e37_79b9_7f4a_7c15,
+    0x4f1b_bcdd_7a2d_8c13,
+];
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -8,7 +20,6 @@ pub struct CloneBuildHasher<H: Hasher + Clone> {
 }
 
 impl<H: Hasher + Clone> CloneBuildHasher<H> {
-    #[allow(dead_code)]
     fn new(hasher: H) -> Self {
         Self { hasher }
     }
@@ -25,104 +36,138 @@ impl<H: Hasher + Clone> BuildHasher for CloneBuildHasher<H> {
 /// The default hasher for [`crate::HyperLogLog`] and
 /// [`crate::AtomicHyperLogLog`].
 ///
-/// `DefaultHasher` has a faster `build_hasher` than
-/// `std::collections::hash_map::RandomState` or `SipHasher13`.
-/// This is important because `build_hasher` is called once for every actual
-/// hash.
+/// It stores a pre-initialized hasher and clones it for each build. This avoids
+/// rebuilding rapidhash's per-hasher state for every item inserted.
 pub type DefaultHasher = CloneBuildHasher<RandomDefaultHasher>;
 
 impl DefaultHasher {
     pub fn seeded(seed: u64) -> Self {
-        Self {
-            hasher: RandomDefaultHasher::seeded(seed),
-        }
+        Self::new(RandomDefaultHasher::seeded(seed))
     }
 }
 
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct RandomDefaultHasher(XxHash64);
+#[derive(Clone)]
+pub struct RandomDefaultHasher {
+    #[cfg(feature = "serde")]
+    seed: u64,
+    hasher: RapidHasher<'static>,
+}
+
+impl core::fmt::Debug for RandomDefaultHasher {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("RandomDefaultHasher").finish_non_exhaustive()
+    }
+}
 
 impl RandomDefaultHasher {
     #[inline]
     pub fn seeded(seed: u64) -> Self {
-        Self(XxHash64::with_seed(seed))
+        // Mix the caller's seed before using it as the rapidhash key. Keep the
+        // secrets fixed so a seeded sketch retains identical hashes after serde
+        // round-trips, including across process boundaries.
+        let mixed_seed = SeedableState::custom(seed, &RAPID_SECRETS).hash_one(seed);
+        let hasher = SeedableState::custom(mixed_seed, &RAPID_SECRETS).build_hasher();
+        Self {
+            #[cfg(feature = "serde")]
+            seed,
+            hasher,
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for RandomDefaultHasher {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_newtype_struct("RandomDefaultHasher", &self.seed)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for RandomDefaultHasher {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let seed = <u64 as serde::Deserialize>::deserialize(deserializer)?;
+        Ok(Self::seeded(seed))
     }
 }
 
 impl Default for RandomDefaultHasher {
     #[inline]
     fn default() -> Self {
-        #[cfg(not(feature = "rand"))]
-        {
-            use foldhash::fast::RandomState;
-            let seed = RandomState::default().build_hasher().finish();
-            Self::seeded(seed)
-        }
         #[cfg(feature = "rand")]
-        {
+        let seed = {
             use rand::Rng;
-            Self::seeded(rand::rng().random())
-        }
+            rand::rng().random()
+        };
+
+        #[cfg(not(feature = "rand"))]
+        let seed = RandomState::default().hash_one(0x7261_7069_6468_6173_u64);
+
+        Self::seeded(seed)
     }
 }
 
 impl Hasher for RandomDefaultHasher {
     #[inline]
     fn finish(&self) -> u64 {
-        self.0.finish()
+        self.hasher.finish()
     }
     #[inline]
     fn write(&mut self, bytes: &[u8]) {
-        self.0.write(bytes)
+        self.hasher.write(bytes)
     }
     #[inline]
     fn write_u8(&mut self, i: u8) {
-        self.0.write_u8(i)
+        self.hasher.write_u8(i)
     }
     #[inline]
     fn write_u16(&mut self, i: u16) {
-        self.0.write_u16(i)
+        self.hasher.write_u16(i)
     }
     #[inline]
     fn write_u32(&mut self, i: u32) {
-        self.0.write_u32(i)
+        self.hasher.write_u32(i)
     }
     #[inline]
     fn write_u64(&mut self, i: u64) {
-        self.0.write_u64(i)
+        self.hasher.write_u64(i)
     }
     #[inline]
     fn write_u128(&mut self, i: u128) {
-        self.0.write_u128(i)
+        self.hasher.write_u128(i)
     }
     #[inline]
     fn write_usize(&mut self, i: usize) {
-        self.0.write_usize(i)
+        self.hasher.write_usize(i)
     }
     #[inline]
     fn write_i8(&mut self, i: i8) {
-        self.0.write_i8(i)
+        self.hasher.write_i8(i)
     }
     #[inline]
     fn write_i16(&mut self, i: i16) {
-        self.0.write_i16(i)
+        self.hasher.write_i16(i)
     }
     #[inline]
     fn write_i32(&mut self, i: i32) {
-        self.0.write_i32(i)
+        self.hasher.write_i32(i)
     }
     #[inline]
     fn write_i64(&mut self, i: i64) {
-        self.0.write_i64(i)
+        self.hasher.write_i64(i)
     }
     #[inline]
     fn write_i128(&mut self, i: i128) {
-        self.0.write_i128(i)
+        self.hasher.write_i128(i)
     }
     #[inline]
     fn write_isize(&mut self, i: isize) {
-        self.0.write_isize(i)
+        self.hasher.write_isize(i)
     }
 }
 

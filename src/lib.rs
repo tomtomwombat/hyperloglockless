@@ -180,7 +180,7 @@ macro_rules! impl_hll {
             /// Inserts the item into the HyperLogLog.
             #[inline]
             pub fn insert<T: Hash + ?Sized>(&$($m)? self, value: &T) {
-                self.insert_inner::<true>(hash_one(&self.hasher, value));
+                self.insert_inner::<true>(self.hasher.hash_one(value));
             }
 
             /// Inserts the hash of an item into the HyperLogLog.
@@ -216,7 +216,7 @@ macro_rules! impl_hll {
             /// ```
             #[inline]
             pub fn insert_lazy<T: Hash + ?Sized>(&$($m)? self, value: &T) {
-                self.insert_inner::<false>(hash_one(&self.hasher, value));
+                self.insert_inner::<false>(self.hasher.hash_one(value));
             }
 
             /// Inserts the hash of an item into the HyperLogLog without updating the count.
@@ -625,14 +625,6 @@ fn correction(count: usize) -> f64 {
         64 => 0.709,
         _ => base / (1.0 + approx / count as f64),
     }
-}
-
-#[inline(always)]
-pub(crate) fn hash_one<S: BuildHasher, T: Hash + ?Sized>(hasher: &S, value: &T) -> u64 {
-    use core::hash::Hasher;
-    let mut h = hasher.build_hasher();
-    value.hash(&mut h);
-    h.finish()
 }
 
 macro_rules! impl_tests {
