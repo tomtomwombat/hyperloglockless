@@ -1,3 +1,4 @@
+use core::borrow::Borrow;
 use core::hash::{BuildHasher, Hash};
 extern crate alloc;
 use crate::buf::Buf;
@@ -43,8 +44,8 @@ fn decode_hash(hash: u32, precision: u8) -> (u32, usize) {
 #[inline]
 fn correction(num: usize) -> f64 {
     let num = num as f64;
-    // Assume most trailing zeros are encoded as the trailing part of the hash, so
-    // 5 extra bits of entropy.
+    // Assume most trailing zeros are encoded as the trailing part of the hash,
+    // so 5 extra bits of entropy.
     let buckets = (1 << (MAX_PRECISION + 5)) as f64;
     let zeros = buckets - num;
     buckets as f64 * crate::math::ln(buckets as f64 / zeros as f64)
@@ -141,11 +142,11 @@ struct SparseLogLog {
 
 impl SparseLogLog {
     /// Fraction (1 / X) of dense memory (1 << precision bytes) before flushing
-    /// `new` into sparse. I.e. we flush X many times before converting to
-    /// dense representation. Just before the flush, we theoretically use
-    /// dense_mem / X + sparse_mem. There's a trade-off in speed vs memory:
-    /// the larger X is, the less memory we use but slower due to more frequent
-    /// flushing. Note we flush anytime count is called regardless of X.
+    /// `new` into sparse. I.e. we flush X many times before converting to dense
+    /// representation. Just before the flush, we theoretically use dense_mem /
+    /// X + sparse_mem. There's a trade-off in speed vs memory: the larger X is,
+    /// the less memory we use but slower due to more frequent flushing. Note we
+    /// flush anytime count is called regardless of X.
     const NEW_SIZE_FACTOR: usize = 25;
 
     pub fn new(precision: u8) -> Self {
@@ -171,9 +172,11 @@ impl SparseLogLog {
     pub fn insert_hash(&mut self, hash: u64) {
         let encoded = encode_hash(hash);
         if self.new.len() == self.new.capacity() {
-            let dense_hll_size = ((1 << self.precision) as usize) << 2;
+            // A conservative allocation strategy
+            let dense_hll_size = self.full_thresh() << 2;
+            let new_cap = 1 + (3 * self.new.len()) >> 1;
             let max_len = crate::math::ceil(dense_hll_size as f64 / Self::NEW_SIZE_FACTOR as f64) as usize;
-            let new_cap = core::cmp::min(1 + (3 * self.new.len()) >> 1, max_len);
+            let new_cap = core::cmp::min(new_cap, max_len);
             self.new.reserve_exact(new_cap - self.new.len());
         }
         self.new.push(encoded);
@@ -247,6 +250,11 @@ impl SparseLogLog {
     }
 
     #[inline]
+    fn full_thresh(&self) -> usize {
+        Self::hll_size_bytes(self.precision)
+    }
+
+    #[inline]
     pub fn full(&self) -> bool {
         self.indexes.size() > Self::hll_size_bytes(self.precision)
     }
@@ -254,12 +262,18 @@ impl SparseLogLog {
 
 impl From<SparseLogLog> for HyperLogLog {
     fn from(mut sparse: SparseLogLog) -> Self {
-        sparse.flush();
-        let registers = sparse.indexes.into_iter();
         let mut hll = HyperLogLog::new(sparse.precision);
-        for encoded in registers {
-            let (rank, register) = decode_hash(encoded, sparse.precision);
-            hll.update::<true>(rank as u8, register);
+        if sparse.indexes.size() > 0 {
+            sparse.flush();
+            for encoded in sparse.indexes.into_iter() {
+                let (rank, register) = decode_hash(encoded, sparse.precision);
+                hll.update::<true>(rank as u8, register);
+            }
+        } else {
+            for encoded in sparse.new.into_iter() {
+                let (rank, register) = decode_hash(encoded, sparse.precision);
+                hll.update::<true>(rank as u8, register);
+            }
         }
         hll
     }
@@ -339,17 +353,80 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
     /// Inserts the item into the HyperLogLogPlus.
     /// `self` switches to dense mode if sparse mode exceeds memory usage of
     /// dense mode.
-    #[inline]
+    #[inline(always)]
     pub fn insert<T: Hash + ?Sized>(&mut self, value: &T) {
         self.insert_hash(crate::hash_one(&self.hasher, value));
     }
 
-    /// Inserts all the items in `iter` into the `self`.
+    /// Inserts all the items in `iter` into `self`.
+    ///
+    /// When already in dense mode, large iterators skip updating the cached
+    /// count on each insert. The next call to [`Self::count`] or
+    /// [`Self::raw_count`] recomputes it by scanning all registers.
     #[inline]
-    pub fn insert_all<'a, T: Hash + 'a, I: Iterator<Item = &'a T>>(&mut self, iter: I) {
-        for val in iter {
-            self.insert(val);
+    pub fn insert_all<T, I>(&mut self, iter: I)
+    where
+        T: Hash,
+        I: IntoIterator,
+        I::Item: Borrow<T>,
+    {
+        let mut iter = iter.into_iter();
+        if self.dense.is_none() && !self.insert_all_sparse(&mut iter) {
+            return;
         }
+        self.dense
+            .as_mut()
+            .unwrap()
+            .insert_all_hash(iter.map(|val| crate::hash_one(&self.hasher, val.borrow())));
+    }
+
+    #[inline]
+    fn insert_all_sparse<T, I>(&mut self, mut iter: I) -> bool
+    where
+        T: Hash,
+        I: Iterator,
+        I::Item: Borrow<T>,
+    {
+        let sparse = self.sparse.as_mut().unwrap();
+        for x in iter.by_ref() {
+            sparse.insert_hash(crate::hash_one(&self.hasher, x.borrow()));
+            if sparse.full() {
+                self.swap();
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Inserts all the hashes in `iter` into `self`.
+    #[inline]
+    pub fn insert_all_hash<I>(&mut self, iter: I)
+    where
+        I: IntoIterator,
+        I::Item: Borrow<u64>,
+    {
+        let mut iter = iter.into_iter();
+        if self.dense.is_none() && !self.insert_all_hash_sparse(&mut iter) {
+            return;
+        }
+        self.dense.as_mut().unwrap().insert_all_hash(iter);
+    }
+
+    #[inline]
+    fn insert_all_hash_sparse<I>(&mut self, mut iter: I) -> bool
+    where
+        I: Iterator,
+        I::Item: Borrow<u64>,
+    {
+        let sparse = self.sparse.as_mut().unwrap();
+        for x in iter.by_ref() {
+            sparse.insert_hash(*x.borrow());
+            if sparse.full() {
+                self.swap();
+                return true;
+            }
+        }
+        false
     }
 
     #[inline(always)]
@@ -407,7 +484,14 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
             return Err(Error::IncompatibleLength);
         }
         match (self.is_sparse(), other.is_sparse()) {
-            (true, true) => self.sparse.as_mut().unwrap().union(other.sparse.as_ref().unwrap()),
+            (true, true) => {
+                // TODO: swap as soon as `self` is full.
+                self.sparse.as_mut().unwrap().union(other.sparse.as_ref().unwrap())?;
+                if self.full() {
+                    self.swap();
+                }
+                Ok(())
+            }
             (false, false) => self.dense.as_mut().unwrap().union(other.dense.as_ref().unwrap()),
             (true, false) => {
                 self.swap();
@@ -513,9 +597,17 @@ mod sparse_tests {
 
                     left.union(&right).unwrap();
                     assert_eq!(
+                        left.is_sparse(),
+                        control.is_sparse(),
+                        "\nLeft: {:?}, Right: {:?}, Right: {}",
+                        (li, lj),
+                        (ri, rj),
+                        right.is_sparse(),
+                    );
+                    assert_eq!(
                         left.count(),
                         control.count(),
-                        "Left: {:?}, Right: {:?}",
+                        "\nLeft: {:?}, Right: {:?}",
                         (li, lj),
                         (ri, rj)
                     );
@@ -523,6 +615,65 @@ mod sparse_tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_insert_all() {
+        for seed in 0..=10 {
+            let mut hll1 = HyperLogLogPlus::seeded(12, seed);
+            let mut hll2 = HyperLogLogPlus::seeded(12, seed);
+            let nums: Vec<u64> = (0..10000).collect();
+            for x in nums.iter() {
+                hll1.insert(&x);
+            }
+            hll2.insert_all(nums);
+            assert_eq!(hll1.is_sparse(), hll2.is_sparse());
+            assert_eq!(hll1.raw_count(), hll2.raw_count());
+            assert_eq!(hll1, hll2);
+        }
+    }
+
+    #[test]
+    fn test_insert_all_uses_configured_hasher_in_dense_mode() {
+        let mut batched = HyperLogLogPlus::seeded(4, 42);
+        let mut repeated = HyperLogLogPlus::seeded(4, 42);
+
+        batched.insert_all(0..1000);
+        for value in 0..1000 {
+            repeated.insert(&value);
+        }
+        assert!(!batched.is_sparse());
+        assert_eq!(batched, repeated);
+
+        batched.insert_all(1000..2000);
+        for value in 1000..2000 {
+            repeated.insert(&value);
+        }
+        assert_eq!(batched, repeated);
+    }
+
+    #[test]
+    fn test_insert_all_hash() {
+        let hashes: Vec<u64> = (0u64..10_000)
+            .map(|value| value.wrapping_mul(0x9e37_79b9_7f4a_7c15))
+            .collect();
+        let mut batched = HyperLogLogPlus::seeded(4, 42);
+        let mut repeated = HyperLogLogPlus::seeded(4, 42);
+        batched.insert_all_hash(&hashes);
+        for hash in &hashes {
+            repeated.insert_hash(*hash);
+        }
+        assert!(!batched.is_sparse());
+        assert_eq!(batched, repeated);
+
+        let more_hashes: Vec<u64> = (10_000u64..20_000)
+            .map(|value| value.wrapping_mul(0x9e37_79b9_7f4a_7c15))
+            .collect();
+        batched.insert_all_hash(&more_hashes);
+        for hash in &more_hashes {
+            repeated.insert_hash(*hash);
+        }
+        assert_eq!(batched, repeated);
     }
 }
 

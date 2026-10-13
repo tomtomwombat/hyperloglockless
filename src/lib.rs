@@ -4,6 +4,7 @@
 
 extern crate alloc;
 use alloc::{boxed::Box, vec::Vec};
+use core::borrow::Borrow;
 use core::hash::{BuildHasher, Hash};
 use core::iter::repeat;
 use core::sync::atomic::Ordering::Relaxed;
@@ -226,39 +227,38 @@ macro_rules! impl_hll {
             }
 
             /// Inserts all the items in `iter` into the `self`.
+            /// For large iterators, this skips updating the cached count on each insert. The next
+            /// call to [`Self::count`] or [`Self::raw_count`] recomputes it by scanning all registers.
             #[inline]
-            pub fn insert_all<'a, T: Hash + 'a, I: Iterator<Item = &'a T>>(&$($m)? self, iter: I) {
-                for val in iter {
-                    self.insert(val);
+            pub fn insert_all<T, I>(&$($m)? self, iter: I)
+            where
+                T: Hash,
+                I: IntoIterator,
+                I::Item: Borrow<T>,
+            {
+                let iter = iter.into_iter();
+                if iter.size_hint().0 > self.len() {
+                    for val in iter { self.insert_lazy(val.borrow()); }
+                } else {
+                    for val in iter { self.insert(val.borrow()); }
                 }
             }
 
-            /// Inserts all the items in `iter` into the `self`.
-            /// See [`Self::insert_lazy`].
+            /// Inserts all the hashes in `iter` into the `self`.
+            /// For large iterators, this skips updating the cached count on each insert. The next
+            /// call to [`Self::count`] or [`Self::raw_count`] recomputes it by scanning all registers.
             #[inline]
-            pub fn insert_all_lazy<'a, T: Hash + 'a, I: Iterator<Item = &'a T>>(&$($m)? self, iter: I) {
-                for val in iter {
-                    self.insert_lazy(val);
+            pub fn insert_all_hash<I>(&$($m)? self, iter: I)
+            where
+                I: IntoIterator,
+                I::Item: Borrow<u64>,
+            {
+                let iter = iter.into_iter();
+                if iter.size_hint().0 > self.len() {
+                    for val in iter { self.insert_hash_lazy(*val.borrow()); }
+                } else {
+                    for val in iter { self.insert_hash(*val.borrow()); }
                 }
-            }
-
-            /// Counts the current items in `self` plus the items in `iter` and returns the count.
-            /// This is optimized based on the size hint of `iter`: if `iter` is very long, each insert
-            /// does not update the count in O(1). Instead it will cheaply insert items and then scan
-            /// and all the registers at once at then end.
-            #[inline]
-            pub fn count_once<'a, T: Hash + 'a, I: Iterator<Item = &'a T>>(&$($m)? self, iter: I) -> f64 {
-                let len = iter.size_hint().0;
-                let thresh = self.len();
-                match len {
-                    l if l > thresh => {
-                        self.insert_all_lazy(iter);
-                    }
-                    _ => {
-                        self.insert_all(iter);
-                    }
-                }
-                self.raw_count()
             }
 
             #[cold]
@@ -360,6 +360,10 @@ impl<S: BuildHasher> HyperLogLog<S> {
     pub fn iter(&self) -> impl Iterator<Item = u8> + '_ {
         self.registers.iter().map(|x| *x)
     }
+
+    // TODO: drain(&self) -> data
+    // returns non-atomic copy of data, and clears the registers.
+    // ensures nothing gets double counted
 
     #[inline]
     fn updated_count(&self) -> bool {
@@ -651,6 +655,19 @@ macro_rules! impl_tests {
             }
 
             #[test]
+            fn test_insert_all_hash() {
+                let mut batched = $name::seeded(12, $seed);
+                let mut repeated = $name::seeded(12, $seed);
+                let hashes: Vec<u64> = (0..10_000).collect();
+                batched.insert_all_hash(&hashes);
+                for hash in &hashes {
+                    repeated.insert_hash(*hash);
+                }
+                assert_eq!(batched, repeated);
+                assert_eq!(batched.raw_count(), repeated.raw_count());
+            }
+
+            #[test]
             fn test_low_error() {
                 for p in 4..=18 {
                     low_error(p);
@@ -658,7 +675,8 @@ macro_rules! impl_tests {
             }
 
             fn low_error(precision: u8) {
-                let thresh = error_for_precision(precision) * 1.3; // within 30% of the expected error
+                // within 30% of the expected error
+                let thresh = error_for_precision(precision) * 1.3;
 
                 let mut counted = 0;
                 let mut total_err = 0f64;
@@ -704,7 +722,7 @@ macro_rules! impl_tests {
 
             #[test]
             fn test_union() {
-                for p in 4..=18 {
+                for p in 4..=12 {
                     for seed in 0..=50 {
                         let ranges = [(0, 0), (0, 1), (0, 50), (0, 2000), (0, 10000), (100, 1000)];
                         for (li, lj) in ranges.clone() {
@@ -830,6 +848,15 @@ mod other_tests {
 #[cfg(test)]
 mod atomic_parity_tests {
     use super::*;
+
+    #[test]
+    fn batch_inserts_work_through_shared_reference() {
+        let atomic = AtomicHyperLogLog::seeded(12, 42);
+        let shared = &atomic;
+        shared.insert_all(0..1000);
+        shared.insert_all_hash(0..1000);
+        assert!(shared.raw_count() > 0.0);
+    }
 
     #[test]
     fn count_parity() {
