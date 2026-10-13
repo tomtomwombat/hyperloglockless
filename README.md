@@ -39,7 +39,7 @@ let count = hll.count(); // ~27
 assert_eq!(hll.len(), 1 << precision); // 16384 bytes
 ```
 
-Use any hasher:
+The default hasher is `twox_hash` because of its portability, MSRV, and reasonable speed. However, you may use any hasher:
 ```rust
 use hyperloglockless::HyperLogLog;
 use foldhash::fast::RandomState;
