@@ -1,4 +1,4 @@
-use core::hash::{BuildHasher, Hasher};
+use core::hash::BuildHasher;
 #[cfg(not(feature = "rand"))]
 use rapidhash::quality::RandomState;
 use rapidhash::quality::{RapidHasher, SeedableState};
@@ -13,44 +13,18 @@ const RAPID_SECRETS: [u64; 7] = [
     0x4f1b_bcdd_7a2d_8c13,
 ];
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct CloneBuildHasher<H: Hasher + Clone> {
-    hasher: H,
-}
-
-impl<H: Hasher + Clone> CloneBuildHasher<H> {
-    fn new(hasher: H) -> Self {
-        Self { hasher }
-    }
-}
-
-impl<H: Hasher + Clone> BuildHasher for CloneBuildHasher<H> {
-    type Hasher = H;
-    #[inline]
-    fn build_hasher(&self) -> Self::Hasher {
-        self.hasher.clone()
-    }
-}
-
 /// The default hasher for [`crate::HyperLogLog`] and
 /// [`crate::AtomicHyperLogLog`].
 ///
-/// It stores a pre-initialized hasher and clones it for each build. This avoids
-/// rebuilding rapidhash's per-hasher state for every item inserted.
-pub type DefaultHasher = CloneBuildHasher<RandomDefaultHasher>;
-
-impl DefaultHasher {
-    pub fn seeded(seed: u64) -> Self {
-        Self::new(RandomDefaultHasher::seeded(seed))
-    }
-}
+/// It stores Rapidhash's seeded builder state and creates a fresh hasher for
+/// each item, allowing the compiler to see that the sponge starts empty.
+pub type DefaultHasher = RandomDefaultHasher;
 
 #[derive(Clone)]
 pub struct RandomDefaultHasher {
     #[cfg(feature = "serde")]
     seed: u64,
-    hasher: RapidHasher<'static>,
+    state: SeedableState<'static>,
 }
 
 impl core::fmt::Debug for RandomDefaultHasher {
@@ -66,11 +40,11 @@ impl RandomDefaultHasher {
         // secrets fixed so a seeded sketch retains identical hashes after serde
         // round-trips, including across process boundaries.
         let mixed_seed = SeedableState::custom(seed, &RAPID_SECRETS).hash_one(seed);
-        let hasher = SeedableState::custom(mixed_seed, &RAPID_SECRETS).build_hasher();
+        let state = SeedableState::custom(mixed_seed, &RAPID_SECRETS);
         Self {
             #[cfg(feature = "serde")]
             seed,
-            hasher,
+            state,
         }
     }
 }
@@ -112,69 +86,19 @@ impl Default for RandomDefaultHasher {
     }
 }
 
-impl Hasher for RandomDefaultHasher {
-    #[inline]
-    fn finish(&self) -> u64 {
-        self.hasher.finish()
-    }
-    #[inline]
-    fn write(&mut self, bytes: &[u8]) {
-        self.hasher.write(bytes)
-    }
-    #[inline]
-    fn write_u8(&mut self, i: u8) {
-        self.hasher.write_u8(i)
-    }
-    #[inline]
-    fn write_u16(&mut self, i: u16) {
-        self.hasher.write_u16(i)
-    }
-    #[inline]
-    fn write_u32(&mut self, i: u32) {
-        self.hasher.write_u32(i)
-    }
-    #[inline]
-    fn write_u64(&mut self, i: u64) {
-        self.hasher.write_u64(i)
-    }
-    #[inline]
-    fn write_u128(&mut self, i: u128) {
-        self.hasher.write_u128(i)
-    }
-    #[inline]
-    fn write_usize(&mut self, i: usize) {
-        self.hasher.write_usize(i)
-    }
-    #[inline]
-    fn write_i8(&mut self, i: i8) {
-        self.hasher.write_i8(i)
-    }
-    #[inline]
-    fn write_i16(&mut self, i: i16) {
-        self.hasher.write_i16(i)
-    }
-    #[inline]
-    fn write_i32(&mut self, i: i32) {
-        self.hasher.write_i32(i)
-    }
-    #[inline]
-    fn write_i64(&mut self, i: i64) {
-        self.hasher.write_i64(i)
-    }
-    #[inline]
-    fn write_i128(&mut self, i: i128) {
-        self.hasher.write_i128(i)
-    }
-    #[inline]
-    fn write_isize(&mut self, i: isize) {
-        self.hasher.write_isize(i)
+impl BuildHasher for RandomDefaultHasher {
+    type Hasher = RapidHasher<'static>;
+
+    #[inline(always)]
+    fn build_hasher(&self) -> Self::Hasher {
+        self.state.build_hasher()
     }
 }
 
 #[cfg(test)]
 mod test {
     use crate::hasher::RandomDefaultHasher;
-    use core::hash::Hasher;
+    use core::hash::{BuildHasher, Hasher};
 
     fn hash_all(mut x: impl Hasher) -> u64 {
         x.write(&[1; 16]);
@@ -195,8 +119,8 @@ mod test {
 
     #[test]
     fn test_hasher() {
-        let h1 = RandomDefaultHasher::seeded(0);
-        let h2 = RandomDefaultHasher::seeded(0);
+        let h1 = RandomDefaultHasher::seeded(0).build_hasher();
+        let h2 = RandomDefaultHasher::seeded(0).build_hasher();
         assert_eq!(hash_all(h1), hash_all(h2),);
     }
 }
