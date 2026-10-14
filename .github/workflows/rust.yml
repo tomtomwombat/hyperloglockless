@@ -21,7 +21,15 @@ jobs:
     - name: Build
       run: cargo hack build --verbose --release --feature-powerset --exclude-features loom
     - name: Tests
-      run: cargo hack test --verbose --release --feature-powerset --exclude-features loom
+      run: cargo hack test --verbose --release --lib --bins --tests --feature-powerset --exclude-features loom
+    - name: Documentation tests
+      run: cargo test --verbose --release --doc
+    - name: No default hasher
+      run: cargo test --verbose --release --lib --bins --tests --no-default-features
+    - name: Non rand default seed
+      run: cargo test --lib --no-default-features --features default-hasher hasher::test
+    - name: Non rand without std
+      run: cargo check --no-default-features --features default-hasher
 
     - name: Install thumb target
       run: rustup target add thumbv7em-none-eabi
@@ -29,9 +37,9 @@ jobs:
       run: cargo check --target thumbv7em-none-eabi --no-default-features
 
     - name: Loom build
-      run: cargo hack build --lib --bins --tests --feature-powerset --exclude-features serde,rand,default
+      run: cargo build --lib --bins --tests --no-default-features --features loom,default-hasher
     - name: Loom tests
-      run: cargo hack test loom --lib --bins --tests --feature-powerset --exclude-features serde,rand,default
+      run: cargo test loom --lib --bins --tests --no-default-features --features loom,default-hasher
   
   msrv:
     runs-on: ubuntu-latest
@@ -39,14 +47,22 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions-rs/toolchain@v1
         with:
-          toolchain: "1.70"
+          toolchain: "1.71"
           override: true
       - name: Install cargo-hack
         run: cargo install cargo-hack --version 0.6.37 --force --locked
       - name: Build
         run: cargo hack build --verbose --release --feature-powerset --exclude-features loom
       - name: Tests
-        run: cargo hack test --verbose --release --feature-powerset --exclude-features loom
+        run: cargo hack test --verbose --release --lib --bins --tests --feature-powerset --exclude-features loom
+      - name: Documentation tests
+        run: cargo test --verbose --release --doc
+      - name: No default hasher
+        run: cargo test --verbose --release --lib --bins --tests --no-default-features
+      - name: Non rand default seed
+        run: cargo test --lib --no-default-features --features default-hasher hasher::test
+      - name: Non rand without std
+        run: cargo check --no-default-features --features default-hasher
 
       - name: Install thumb target
         run: rustup target add thumbv7em-none-eabi
