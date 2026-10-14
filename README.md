@@ -93,7 +93,8 @@ Below measures and compares the amortized insert performance of `hyperloglockles
 
 ## Available Features
 
-- **`rand`** - Enabled by default. Uses `rand`'s thread-local RNG to seed the default hasher. Disabling this feature by using `default-features = false` keeps the crate `no_std` and uses rapidhash's fallback entropy sources. Rapidhash is built with no features in either configuration.
+- **`default-hasher`** - Enabled by default. Provides Rapidhash's quality hasher as the default type for each sketch and does not require `std`. When enabled without `rand`, it uses Rapidhash's own random state for the default seed. Disabling this feature removes both the `rand` and `rapidhash` dependencies; sketches then require an explicit hasher type and can still use `new` when that hasher implements `Default`.
+- **`rand`** - Enabled by default. Implies `default-hasher` and `std`, and uses `rand`'s thread-local RNG to seed the default hasher instead of Rapidhash's random state.
 - **`serde`** - HyperLogLogs implement `Serialize` and `Deserialize` when possible.
 - **`loom`** - `AtomicHyperLogLog`s use [loom](https://github.com/tokio-rs/loom) atomics, making it compatible with loom testing.
 

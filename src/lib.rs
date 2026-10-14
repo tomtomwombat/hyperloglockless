@@ -3,6 +3,8 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 extern crate alloc;
+#[cfg(test)]
+extern crate std;
 use alloc::{boxed::Box, vec::Vec};
 use core::borrow::Borrow;
 use core::hash::{BuildHasher, Hash};
@@ -22,7 +24,9 @@ mod atomic_f64;
 use atomic_f64::AtomicF64;
 mod beta;
 use beta::beta_horner;
+#[cfg(feature = "default-hasher")]
 mod hasher;
+#[cfg(feature = "default-hasher")]
 pub use hasher::DefaultHasher;
 mod error;
 pub use error::Error;
@@ -34,61 +38,77 @@ pub use sparse::HyperLogLogPlus;
 mod buf;
 mod vint;
 
-/// HyperLogLog is a data structure for the "count-distinct problem",
-/// approximating the number of distinct elements in a multiset.
-///
-/// # Example
-/// ```rust
-/// use hyperloglockless::HyperLogLog;
-///
-/// let mut hll = HyperLogLog::new(16);
-/// hll.insert("42");
-/// hll.insert("🦀");
-///
-/// let count = hll.count();
-/// ```
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct HyperLogLog<S = DefaultHasher> {
-    /// `registers[k]` is the maximum trailing zeros for all 64-bit hashes
-    /// assigned to kth register
-    registers: Box<[u8]>,
-    /// `registers.len() == 1 << precision`
-    precision: u32,
-    hasher: S,
-    zeros: usize,
-    sum: f64,
-    correction: f64,
-    updated_count: bool,
+macro_rules! define_hll_type {
+    ($(#[$meta:meta])* $name:ident, [$($derive:ident),*] { $($fields:tt)* }) => {
+        #[cfg(feature = "default-hasher")]
+        $(#[$meta])*
+        #[derive($($derive),*)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+        pub struct $name<S = DefaultHasher> { $($fields)* }
+
+        #[cfg(not(feature = "default-hasher"))]
+        $(#[$meta])*
+        #[derive($($derive),*)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+        pub struct $name<S> { $($fields)* }
+    };
 }
 
-/// HyperLogLog is a data structure for the "count-distinct problem",
-/// approximating the number of distinct elements in a multiset.
-/// [`AtomicHyperLogLog`] is the thread-safe counterpart of [`HyperLogLog`].
-///
-/// # Example
-/// ```rust
-/// use hyperloglockless::AtomicHyperLogLog;
-///
-/// let hll = AtomicHyperLogLog::new(16);
-/// hll.insert("42");
-/// hll.insert("🦀");
-///
-/// let count = hll.count();
-/// ```
-#[derive(Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct AtomicHyperLogLog<S = DefaultHasher> {
-    /// `registers[k]` is the maximum trailing zeros for all 64-bit hashes
-    /// assigned to kth register
-    registers: Box<[AtomicU8]>,
-    /// `registers.len() == 1 << precision`
-    precision: u32,
-    hasher: S,
-    zeros: AtomicUsize,
-    sum: AtomicF64,
-    correction: f64,
-    updated_count: AtomicBool,
+define_hll_type! {
+    /// HyperLogLog is a data structure for the "count-distinct problem",
+    /// approximating the number of distinct elements in a multiset.
+    ///
+    /// # Example
+    /// ```rust
+    /// use hyperloglockless::HyperLogLog;
+    ///
+    /// let mut hll = HyperLogLog::new(16);
+    /// hll.insert("42");
+    /// hll.insert("🦀");
+    ///
+    /// let count = hll.count();
+    /// ```
+    HyperLogLog, [Debug, Clone] {
+        /// `registers[k]` is the maximum trailing zeros for all 64-bit hashes
+        /// assigned to kth register
+        registers: Box<[u8]>,
+        /// `registers.len() == 1 << precision`
+        precision: u32,
+        hasher: S,
+        zeros: usize,
+        sum: f64,
+        correction: f64,
+        updated_count: bool,
+    }
+}
+
+define_hll_type! {
+    /// HyperLogLog is a data structure for the "count-distinct problem",
+    /// approximating the number of distinct elements in a multiset.
+    /// [`AtomicHyperLogLog`] is the thread-safe counterpart to [`HyperLogLog`].
+    ///
+    /// # Example
+    /// ```rust
+    /// use hyperloglockless::AtomicHyperLogLog;
+    ///
+    /// let hll = AtomicHyperLogLog::new(16);
+    /// hll.insert("42");
+    /// hll.insert("🦀");
+    ///
+    /// let count = hll.count();
+    /// ```
+    AtomicHyperLogLog, [Debug] {
+        /// `registers[k]` is the maximum trailing zeros for all 64-bit hashes
+        /// assigned to kth register
+        registers: Box<[AtomicU8]>,
+        /// `registers.len() == 1 << precision`
+        precision: u32,
+        hasher: S,
+        zeros: AtomicUsize,
+        sum: AtomicF64,
+        correction: f64,
+        updated_count: AtomicBool,
+    }
 }
 
 impl<S: BuildHasher> HyperLogLog<S> {
@@ -131,17 +151,27 @@ impl<S: BuildHasher> AtomicHyperLogLog<S> {
 
 macro_rules! impl_hll {
     ($name:ident, $ismut:literal, $($m:ident)?) => {
+        #[cfg(feature = "default-hasher")]
         impl $name {
             /// Returns a new [`Self`] with `1 << precision` registers (1 byte each)
             /// using the default hasher with a random seed.
-            pub fn new(precision: u8) -> $name<DefaultHasher> {
+            pub fn new(precision: u8) -> $name {
                 $name::with_hasher(precision, DefaultHasher::default())
             }
 
             /// Returns a new [`Self`] with `1 << precision` registers (1 byte each)
             /// using the default hasher seeded with `seed`.
-            pub fn seeded(precision: u8, seed: u64) -> $name<DefaultHasher> {
+            pub fn seeded(precision: u8, seed: u64) -> $name {
                 $name::with_hasher(precision, DefaultHasher::seeded(seed))
+            }
+        }
+
+        #[cfg(not(feature = "default-hasher"))]
+        impl<S: BuildHasher + Default> $name<S> {
+            /// Returns a new [`Self`] with `1 << precision` registers (1 byte each)
+            /// using `S::default()` as its hasher.
+            pub fn new(precision: u8) -> $name<S> {
+                $name::with_hasher(precision, S::default())
             }
         }
 
@@ -630,6 +660,7 @@ fn correction(count: usize) -> f64 {
 macro_rules! impl_tests {
     ($modname:ident, $name:ident, $seed:literal) => {
         #[allow(unused_mut)]
+        #[cfg(feature = "default-hasher")]
         #[cfg(not(feature = "loom"))]
         #[cfg(test)]
         mod $modname {
@@ -805,6 +836,7 @@ impl_tests!(non_atomic_0_seed, HyperLogLog, 0);
 impl_tests!(atomic, AtomicHyperLogLog, 42);
 
 #[cfg(test)]
+#[cfg(feature = "default-hasher")]
 mod other_tests {
     use super::*;
 
@@ -838,6 +870,7 @@ mod other_tests {
 
 #[cfg(not(feature = "loom"))]
 #[cfg(test)]
+#[cfg(feature = "default-hasher")]
 mod atomic_parity_tests {
     use super::*;
 
@@ -884,6 +917,7 @@ mod atomic_parity_tests {
 
 #[cfg(feature = "loom")]
 #[cfg(test)]
+#[cfg(feature = "default-hasher")]
 mod loom_tests {
     use super::*;
 
@@ -922,5 +956,29 @@ mod misc_tests {
             let expected = 1.0 / ((1u128 << i) as f64);
             assert_eq!(expected, INV_POW2[i]);
         }
+    }
+}
+
+#[cfg(all(test, not(feature = "default-hasher")))]
+mod custom_hasher_tests {
+    use super::*;
+    use std::collections::hash_map::DefaultHasher as StdDefaultHasher;
+    use std::hash::BuildHasherDefault;
+
+    type TestBuildHasher = BuildHasherDefault<StdDefaultHasher>;
+
+    #[test]
+    fn generic_new_works_without_default_hasher_feature() {
+        let mut hll = HyperLogLog::<TestBuildHasher>::new(4);
+        hll.extend(0..100);
+        assert!(hll.count() > 0);
+
+        let hll = AtomicHyperLogLog::<TestBuildHasher>::new(4);
+        hll.extend(0..100);
+        assert!(hll.count() > 0);
+
+        let mut hll_plus = HyperLogLogPlus::<TestBuildHasher>::new(4);
+        hll_plus.extend(0..100);
+        assert!(hll_plus.count() > 0);
     }
 }

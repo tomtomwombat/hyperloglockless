@@ -1,6 +1,4 @@
 use core::hash::BuildHasher;
-#[cfg(not(feature = "rand"))]
-use rapidhash::quality::RandomState;
 use rapidhash::quality::{RapidHasher, SeedableState};
 
 const RAPID_SECRETS: [u64; 7] = [
@@ -80,7 +78,7 @@ impl Default for RandomDefaultHasher {
         };
 
         #[cfg(not(feature = "rand"))]
-        let seed = RandomState::default().hash_one(0x7261_7069_6468_6173_u64);
+        let seed = rapidhash::quality::RandomState::default().hash_one(0x7261_7069_6468_6173_u64);
 
         Self::seeded(seed)
     }
@@ -122,5 +120,10 @@ mod test {
         let h1 = RandomDefaultHasher::seeded(0).build_hasher();
         let h2 = RandomDefaultHasher::seeded(0).build_hasher();
         assert_eq!(hash_all(h1), hash_all(h2),);
+    }
+
+    #[test]
+    fn test_default_hasher() {
+        let _ = RandomDefaultHasher::default().build_hasher();
     }
 }

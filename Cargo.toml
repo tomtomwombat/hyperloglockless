@@ -16,15 +16,16 @@ readme = "README.md"
 maintenance = { status = "actively-developed" }
 
 [features]
-default = ["std", "rand"]
+default = ["std", "default-hasher", "rand"]
 std = ["portable-atomic/std"]
 loom = ["dep:loom"]
-rand = ["std", "dep:rand"]
+default-hasher = ["dep:rapidhash"]
+rand = ["default-hasher", "std", "dep:rand"]
 serde = ["dep:serde", "portable-atomic/serde"]
 
 [dependencies]
 loom = { version = "0.7.2", optional = true }
-rapidhash = { version = "4.5.1", default-features = false }
+rapidhash = { version = "4.5.1", default-features = false, optional = true }
 rand = { version = "0.9.0", optional = true }
 serde = { version = "1.0.203", features = ["derive"], optional = true }
 libm = "0.2"

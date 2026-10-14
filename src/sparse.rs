@@ -1,9 +1,10 @@
 use core::borrow::Borrow;
-use core::hash::{BuildHasher, Hash};
+use core::hash::{BuildHasher, Hash, Hasher};
 extern crate alloc;
 use crate::buf::Buf;
 use crate::error::Error;
 use crate::vint::VarInt;
+#[cfg(feature = "default-hasher")]
 use crate::DefaultHasher;
 use crate::HyperLogLog;
 use alloc::vec::Vec;
@@ -28,6 +29,9 @@ fn encode_hash(hash: u64) -> u32 {
     let tz = hash.trailing_zeros();
     match tz {
         0..=5 => prefix | ((hash & 0b111111) as u32) << 1,
+        // The low 7-bit tag value 1 is otherwise unused; reserve it for the
+        // maximum rank so it does not overlap the encoded register index.
+        64 => prefix | 1,
         _ => prefix | (tz << 1) | 1,
     }
 }
@@ -35,9 +39,10 @@ fn encode_hash(hash: u64) -> u32 {
 #[inline]
 fn decode_hash(hash: u32, precision: u8) -> (u32, usize) {
     let index = (hash >> (7 + MAX_PRECISION - precision)) as usize;
-    match hash & 1 {
-        0 => (hash.trailing_zeros(), index),
-        _ => (1 + ((hash & 0b111111) >> 1), index),
+    match hash & 0b1111111 {
+        1 => (65, index),
+        tag if tag & 1 == 0 => (hash.trailing_zeros(), index),
+        tag => (1 + (tag >> 1), index),
     }
 }
 
@@ -260,18 +265,18 @@ impl SparseLogLog {
     }
 }
 
-impl From<SparseLogLog> for HyperLogLog {
-    fn from(mut sparse: SparseLogLog) -> Self {
-        let mut hll = HyperLogLog::new(sparse.precision);
-        if sparse.indexes.size() > 0 {
-            sparse.flush();
-            for encoded in sparse.indexes.into_iter() {
-                let (rank, register) = decode_hash(encoded, sparse.precision);
+impl SparseLogLog {
+    fn into_dense(mut self) -> HyperLogLog<DummyBuildHasher> {
+        let mut hll = HyperLogLog::with_hasher(self.precision, DummyBuildHasher);
+        if self.indexes.size() > 0 {
+            self.flush();
+            for encoded in self.indexes.into_iter() {
+                let (rank, register) = decode_hash(encoded, self.precision);
                 hll.update::<true>(rank as u8, register);
             }
         } else {
-            for encoded in sparse.new.into_iter() {
-                let (rank, register) = decode_hash(encoded, sparse.precision);
+            for encoded in self.new.into_iter() {
+                let (rank, register) = decode_hash(encoded, self.precision);
                 hll.update::<true>(rank as u8, register);
             }
         }
@@ -279,29 +284,72 @@ impl From<SparseLogLog> for HyperLogLog {
     }
 }
 
-/// An implementation of the the [HyperLogLog++](https://static.googleusercontent.com/media/research.google.com/en//pubs/archive/40671.pdf) data structure.
-///
-/// For small cardinalities, a "sparse" representation is used. The sparse
-/// representation is more accurate and uses less memory, but has slower insert
-/// speed. The error and memory usage of the sparse representation scales
-/// roughly linearly with the number of items inserted. When the memory of the
-/// sparse representation equals the memory of the dense representation, it
-/// switches to dense automatically. This happens inside the
-/// `insert`/`insert_hash` call (which is why it needs `&mut self`). The error
-/// of the sparse representation never exceeds that of the dense.
-#[derive(Debug, Clone)]
+/// Used only while converting sparse state into registers. The temporary HLL's
+/// builder is discarded before the dense HLL is constructed with the real one.
+#[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct HyperLogLogPlus<S = DefaultHasher> {
-    sparse: Option<SparseLogLog>,
-    dense: Option<HyperLogLog>,
-    hasher: S,
+struct DummyBuildHasher;
+
+impl BuildHasher for DummyBuildHasher {
+    type Hasher = DummyHasher;
+
+    fn build_hasher(&self) -> Self::Hasher {
+        DummyHasher
+    }
 }
 
-impl HyperLogLogPlus {
+#[derive(Clone, Debug, Default)]
+struct DummyHasher;
+
+impl Hasher for DummyHasher {
+    fn finish(&self) -> u64 {
+        panic!("temporary conversion HLL must not hash items")
+    }
+
+    fn write(&mut self, _bytes: &[u8]) {
+        panic!("temporary conversion HLL must not hash items")
+    }
+}
+
+macro_rules! define_hll_plus_type {
+    ($(#[$meta:meta])* $name:ident { $($fields:tt)* }) => {
+        #[cfg(feature = "default-hasher")]
+        $(#[$meta])*
+        #[derive(Debug, Clone)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+        pub struct $name<S = DefaultHasher> { $($fields)* }
+
+        #[cfg(not(feature = "default-hasher"))]
+        $(#[$meta])*
+        #[derive(Debug, Clone)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+        pub struct $name<S> { $($fields)* }
+    };
+}
+
+define_hll_plus_type! {
+    /// An implementation of the [HyperLogLog++](https://static.googleusercontent.com/media/research.google.com/en//pubs/archive/40671.pdf) data structure.
+    ///
+    /// For small cardinalities, a "sparse" representation is used. The sparse
+    /// representation is more accurate and uses less memory, but has slower insert
+    /// speed. The error and memory usage of the sparse representation scales
+    /// roughly linearly with the number of items inserted. When the memory of the
+    /// sparse representation equals the memory of the dense representation, it
+    /// switches to dense automatically. This happens inside the
+    /// `insert`/`insert_hash` call (which is why it needs `&mut self`).
+    HyperLogLogPlus {
+        sparse: Option<SparseLogLog>,
+        dense: Option<HyperLogLog<DummyBuildHasher>>,
+        hasher: S,
+    }
+}
+
+#[cfg(feature = "default-hasher")]
+impl HyperLogLogPlus<DefaultHasher> {
     /// Returns a new [`Self`] using the default hasher with a random seed.
     /// [`Self`] is initialized to use the compact and dynamically sized sparse
     /// representation, but later switches to the dense representation when
-    /// it uses equal memory (`1 << precision` registers (1 byte each)).
+    /// it uses equal memory (`1 << precision` registers, 1 byte each).
     pub fn new(precision: u8) -> Self {
         Self::with_hasher(precision, DefaultHasher::default())
     }
@@ -312,6 +360,14 @@ impl HyperLogLogPlus {
     /// it uses equal memory (`1 << precision` registers, 1 byte each).
     pub fn seeded(precision: u8, seed: u64) -> Self {
         Self::with_hasher(precision, DefaultHasher::seeded(seed))
+    }
+}
+
+#[cfg(not(feature = "default-hasher"))]
+impl<S: BuildHasher + Default> HyperLogLogPlus<S> {
+    /// Returns a new [`Self`] using `S::default()` as its hasher.
+    pub fn new(precision: u8) -> Self {
+        Self::with_hasher(precision, S::default())
     }
 }
 
@@ -371,13 +427,19 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
         I::Item: Borrow<T>,
     {
         let mut iter = iter.into_iter();
-        if self.dense.is_none() && !self.insert_all_sparse(&mut iter) {
+        if let Some(dense) = self.dense.as_mut() {
+            let hasher = &self.hasher;
+            dense.insert_all_hash(iter.map(|value| hasher.hash_one(value.borrow())));
             return;
         }
+        if !self.insert_all_sparse(&mut iter) {
+            return;
+        }
+        let hasher = &self.hasher;
         self.dense
             .as_mut()
             .unwrap()
-            .insert_all_hash(iter.map(|val| self.hasher.hash_one(val.borrow())));
+            .insert_all_hash(iter.map(|value| hasher.hash_one(value.borrow())));
     }
 
     #[inline]
@@ -387,9 +449,11 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
         I: Iterator,
         I::Item: Borrow<T>,
     {
-        let sparse = self.sparse.as_mut().unwrap();
+        let hasher = &self.hasher;
         for x in iter.by_ref() {
-            sparse.insert_hash(self.hasher.hash_one(x.borrow()));
+            let hash = hasher.hash_one(x.borrow());
+            let sparse = self.sparse.as_mut().unwrap();
+            sparse.insert_hash(hash);
             if sparse.full() {
                 self.swap();
                 return true;
@@ -439,8 +503,7 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
 
     #[cold]
     fn swap(&mut self) {
-        let s = self.sparse.take().unwrap();
-        self.dense = Some(s.into());
+        self.dense = Some(self.sparse.take().unwrap().into_dense());
     }
 
     /// Returns the approximate number of elements in `self`.
@@ -504,7 +567,7 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
                     let (rank, register) = decode_hash(*encoded, sparse.precision);
                     dense.update::<true>(rank as u8, register);
                 }
-                for encoded in sparse.indexes.into_iter() {
+                for encoded in &sparse.indexes {
                     let (rank, register) = decode_hash(encoded, sparse.precision);
                     dense.update::<true>(rank as u8, register);
                 }
@@ -516,7 +579,12 @@ impl<S: BuildHasher> HyperLogLogPlus<S> {
 
 impl<S: BuildHasher> PartialEq for HyperLogLogPlus<S> {
     fn eq(&self, other: &Self) -> bool {
-        self.sparse == other.sparse && self.dense == other.dense
+        let sparse_eq = match (&self.sparse, &other.sparse) {
+            (Some(a), Some(b)) => a == b,
+            (None, None) => true,
+            _ => false,
+        };
+        sparse_eq && self.dense == other.dense
     }
 }
 impl<S: BuildHasher> Eq for HyperLogLogPlus<S> {}
@@ -549,6 +617,15 @@ mod sparse_tests {
     }
 
     #[test]
+    fn test_hash_codec_max_rank() {
+        let precision = 25;
+        let hash = 0;
+        let encoded = encode_hash(hash);
+        assert_eq!(decode_hash(encoded, precision), (65, 0));
+    }
+
+    #[test]
+    #[cfg(feature = "default-hasher")]
     fn test_conversion() {
         for seed in 0..=10 {
             let mut sll = HyperLogLogPlus::seeded(12, seed);
@@ -563,10 +640,11 @@ mod sparse_tests {
                 sll.insert(&x);
             }
             let after = sll.count();
-            assert_eq!(before, after);
+            // Sparse and dense estimators can differ slightly at promotion.
+            assert!(before.abs_diff(after) <= 1, "seed={seed}: {before} -> {after}");
             assert_eq!(after, hll.count());
             assert!(!sll.is_sparse());
-            assert_eq!(hll, sll.dense.unwrap());
+            assert!(hll.iter().eq(sll.dense.unwrap().iter()));
         }
     }
 
@@ -582,6 +660,7 @@ mod sparse_tests {
     }
 
     #[test]
+    #[cfg(feature = "default-hasher")]
     fn test_union() {
         for seed in 0..=100 {
             let ranges = [(0, 0), (0, 1), (0, 50), (0, 2000), (0, 10000), (100, 1000)];
@@ -618,6 +697,7 @@ mod sparse_tests {
     }
 
     #[test]
+    #[cfg(feature = "default-hasher")]
     fn test_insert_all() {
         for seed in 0..=10 {
             let mut hll1 = HyperLogLogPlus::seeded(12, seed);
@@ -634,6 +714,7 @@ mod sparse_tests {
     }
 
     #[test]
+    #[cfg(feature = "default-hasher")]
     fn test_insert_all_uses_configured_hasher_in_dense_mode() {
         let mut batched = HyperLogLogPlus::seeded(4, 42);
         let mut repeated = HyperLogLogPlus::seeded(4, 42);
@@ -653,6 +734,7 @@ mod sparse_tests {
     }
 
     #[test]
+    #[cfg(feature = "default-hasher")]
     fn test_insert_all_hash() {
         let hashes: Vec<u64> = (0u64..10_000)
             .map(|value| value.wrapping_mul(0x9e37_79b9_7f4a_7c15))
@@ -696,6 +778,7 @@ mod var_int_tests {
     }
 
     #[cfg(feature = "serde")]
+    #[cfg(feature = "default-hasher")]
     #[test]
     fn test_serde_sparse() {
         for seed in 0..=42 {
